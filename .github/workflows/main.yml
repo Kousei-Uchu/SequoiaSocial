@@ -1,18 +1,15 @@
 name: Fetch Daily Affirmation
 
 on:
+  workflow_dispatch:     # <-- add this to allow manual runs
   schedule:
-    # Runs at every hour, at minute 0 (e.g., 00:00, 01:00, 02:00 UTC, etc)
     - cron: '0 * * * *'
 
 jobs:
   fetch_affirmation:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
-
+      - uses: actions/checkout@v3
       - name: Check Sydney time hour and decide whether to run
         id: check_time
         run: |
@@ -23,6 +20,10 @@ jobs:
           else
             echo "run=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: Prepare directory
+        if: steps.check_time.outputs.run == 'true'
+        run: mkdir -p affirmation-storage
 
       - name: Fetch affirmation and save file
         if: steps.check_time.outputs.run == 'true'
@@ -35,7 +36,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
+          git pull
           if ! git diff --quiet; then
             git add affirmation-storage/daily_affirmation.json
             git commit -m "Update daily affirmation"
