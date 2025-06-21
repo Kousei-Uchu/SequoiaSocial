@@ -36,7 +36,7 @@ jobs:
         if: steps.check_time.outputs.run == 'true'
         run: |
           RESPONSE=$(curl -s https://www.affirmations.dev/)
-          echo "$RESPONSE" > affirmation-storage/daily_affirmation.json
+          echo "$RESPONSE" > affirmation-storage/affirmation.json
 
       - name: Commit and push if file changed
         if: steps.check_time.outputs.run == 'true'
@@ -45,7 +45,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git pull
           if ! git diff --quiet; then
-            git add affirmation-storage/daily_affirmation.json
+            git add affirmation-storage/affirmation.json
             git commit -m "Update daily affirmation"
             git push
           else
