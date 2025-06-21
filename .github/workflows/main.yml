@@ -1,0 +1,45 @@
+name: Fetch Daily Affirmation
+
+on:
+  schedule:
+    # Runs at every hour, at minute 0 (e.g., 00:00, 01:00, 02:00 UTC, etc)
+    - cron: '0 * * * *'
+
+jobs:
+  fetch_affirmation:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Check Sydney time hour and decide whether to run
+        id: check_time
+        run: |
+          SYDNEY_HOUR=$(TZ=Australia/Sydney date +'%H')
+          echo "Sydney hour: $SYDNEY_HOUR"
+          if [ "$SYDNEY_HOUR" = "00" ]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+          else
+            echo "run=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fetch affirmation and save file
+        if: steps.check_time.outputs.run == 'true'
+        run: |
+          RESPONSE=$(curl -s https://www.affirmations.dev/)
+          echo "$RESPONSE" > affirmation-storage/daily_affirmation.json
+
+      - name: Commit and push if file changed
+        if: steps.check_time.outputs.run == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if ! git diff --quiet; then
+            git add affirmation-storage/daily_affirmation.json
+            git commit -m "Update daily affirmation"
+            git push
+          else
+            echo "No changes to commit"
+          fi
