@@ -345,7 +345,7 @@
     <main class="home-content" role="main" tabindex="0" aria-label="Home dashboard">
       <section class="home-section">
         <h2>🌟 Affirmation of the Day</h2>
-        <p class="affirmations">You are capable, worthy, and valued just as you are.</p>
+        <p class="affirmations" id="daily-affirmation">You are capable, worthy, and valued just as you are.</p>
       </section>
 
       <section class="home-section notifications" aria-live="polite">
@@ -468,6 +468,19 @@
           }
         });
       });
+    });
+
+    fetch('affirmation-storage/affirmation.json')
+    .then(response => {
+      if (!response.ok) throw new Error("Failed to load affirmation");
+      return response.json();
+    })
+    .then(data => {
+      document.getElementById('daily-affirmation').textContent = data.affirmation;
+    })
+    .catch(error => {
+      console.error(error);
+      document.getElementById('daily-affirmation').textContent = "Couldn't load affirmation.";
     });
   </script>
 </body>
