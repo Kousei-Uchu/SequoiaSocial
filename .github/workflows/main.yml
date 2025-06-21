@@ -1,24 +1,31 @@
 name: Fetch Daily Affirmation
 
 on:
-  workflow_dispatch:     # <-- add this to allow manual runs
+  workflow_dispatch:   # manual trigger allowed
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 * * * *'  # hourly
 
 jobs:
   fetch_affirmation:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - name: Check Sydney time hour and decide whether to run
+
+      - name: Decide whether to run fetch
         id: check_time
         run: |
-          SYDNEY_HOUR=$(TZ=Australia/Sydney date +'%H')
-          echo "Sydney hour: $SYDNEY_HOUR"
-          if [ "$SYDNEY_HOUR" = "00" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual run, always fetch
             echo "run=true" >> $GITHUB_OUTPUT
+            echo "Manual trigger detected, running fetch."
           else
-            echo "run=false" >> $GITHUB_OUTPUT
+            SYDNEY_HOUR=$(TZ=Australia/Sydney date +'%H')
+            echo "Sydney hour: $SYDNEY_HOUR"
+            if [ "$SYDNEY_HOUR" = "00" ]; then
+              echo "run=true" >> $GITHUB_OUTPUT
+            else
+              echo "run=false" >> $GITHUB_OUTPUT
+            fi
           fi
 
       - name: Prepare directory
