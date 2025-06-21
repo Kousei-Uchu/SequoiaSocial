@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sequoia Social</title>
+<style>
+  :root {
+    --bg-dark: #1e1e1e;
+    --bg-medium: #2a2a2a;
+    --bg-light: #383838;
+    --border-color: #444;
+    --accent: #6dbd9c;
+    --text-light: #ddd;
+    --text-muted: #aaa;
+    --radius: 0.8rem;
+    --transition-speed: 300ms;
+    --box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+  }
+
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  body, h1, h2, h3, h4, p {
+    margin: 0;
+  }
+
+  body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: var(--bg-dark);
+    color: var(--text-light);
+    line-height: 1.5;
+    user-select: text;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    padding: 1rem;
+    gap: 1rem;
+  }
+
+  header {
+    background: var(--bg-medium);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 1rem 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+  }
+
+  .brand {
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 1.6rem;
+  }
+
+  .user-profile {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    position: relative;
+    cursor: pointer;
+    outline-offset: 3px;
+  }
+
+  .avatar {
+    width: 2.8rem;
+    height: 2.8rem;
+    background: var(--accent);
+    border-radius: 50%;
+    color: #121212;
+    font-weight: 700;
+    font-size: 1.2rem;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .profile-dropdown {
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    right: 0;
+    background: var(--bg-medium);
+    border-radius: var(--radius);
+    border: 1px solid var(--border-color);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+    width: 12rem;
+    display: none;
+    flex-direction: column;
+    padding: 0.5rem 0;
+    z-index: 1000;
+  }
+
+  .user-profile:hover .profile-dropdown,
+  .user-profile:focus-within .profile-dropdown {
+    display: flex;
+  }
+
+  .profile-dropdown button {
+    background: transparent;
+    border: none;
+    padding: 0.8rem 1.2rem;
+    text-align: left;
+    font-size: 1rem;
+    color: var(--text-light);
+    cursor: pointer;
+    transition: background-color var(--transition-speed);
+  }
+
+  .profile-dropdown button:hover,
+  .profile-dropdown button:focus-visible {
+    background: var(--accent);
+    color: #121212;
+    border-radius: var(--radius);
+    outline: none;
+  }
+
+  .main-content {
+    display: flex;
+    gap: 1rem;
+    flex-grow: 1;
+    height: 82vh;
+    overflow: hidden;
+  }
+
+  nav.sidebar {
+    background: var(--bg-medium);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    width: 6rem;
+    padding: 0.5rem 1rem;
+    display: flex;
+    flex-direction: column;
+    transition: width var(--transition-speed);
+    overflow: hidden;
+    user-select: none;
+  }
+
+  nav.sidebar:hover {
+    width: 15rem;
+    padding: 0.5rem 1rem;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.8rem;
+    border-radius: var(--radius);
+    cursor: pointer;
+    color: inherit;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .nav-item:hover,
+  .nav-item:focus-visible {
+    background: var(--bg-light);
+    outline: none;
+  }
+
+  .nav-item.active {
+    background: var(--accent);
+    color: #121212;
+    font-weight: 600;
+  }
+
+  .nav-icon {
+    font-size: 1.6rem;
+    width: 2.4rem;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .nav-label {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--transition-speed);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    user-select: none;
+  }
+
+  nav.sidebar:hover .nav-label {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Home page layout */
+  .home-content {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .home-section {
+    background: var(--bg-medium);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 1.25rem 2rem;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+    user-select: text;
+  }
+
+  .home-section h2 {
+    margin-bottom: 0.6rem;
+    font-weight: 700;
+    color: var(--accent);
+    user-select: none;
+  }
+
+  .affirmations {
+    font-size: 1.1rem;
+    font-style: italic;
+    color: var(--text-muted);
+    max-width: 40rem;
+  }
+
+  /* Notification Group container */
+  .notification-group {
+    background: var(--bg-light);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 0.75rem 1.2rem;
+    margin-bottom: 0.9rem;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.3s ease;
+  }
+  .notification-group:hover,
+  .notification-group:focus-visible {
+    background: var(--bg-medium);
+    outline: none;
+  }
+
+  .notification-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .notification-header strong {
+    font-weight: 700;
+    font-size: 1.05rem;
+  }
+
+  .notification-summary {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    margin-top: 0.3rem;
+  }
+
+  /* Expanded notification list */
+  .notification-list {
+    margin-top: 0.8rem;
+    padding-left: 1.2rem;
+    list-style-type: none;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+  }
+
+  .notification-list.expanded {
+    max-height: 1000px; /* large enough for content */
+    transition: max-height 0.5s ease;
+  }
+
+  .notification-list li {
+    margin-bottom: 0.5rem;
+    padding: 0.3rem 0.5rem;
+    border-radius: var(--radius);
+    background: var(--bg-medium);
+    color: var(--text-light);
+    cursor: pointer;
+    user-select: text;
+    transition: background-color 0.2s ease;
+  }
+
+  .notification-list li:hover,
+  .notification-list li:focus-visible {
+    background: var(--accent);
+    color: #121212;
+    outline: none;
+  }
+
+  /* Online friends */
+  .online-friends {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .friend {
+    background: var(--bg-light);
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius);
+    font-weight: 600;
+    user-select: none;
+    box-shadow: var(--box-shadow);
+    transition: background-color 0.3s ease;
+  }
+  .friend:hover, .friend:focus-visible {
+    background: var(--accent);
+    color: #121212;
+    outline: none;
+    cursor: pointer;
+  }
+
+  /* Logged in section styling */
+  .home-section p {
+    font-weight: 600;
+    user-select: none;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand">Sequoia Social</div>
+    <div class="user-profile" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-label="User profile menu">
+      <div class="avatar" aria-hidden="true">JD</div>
+      <span>John Doe</span>
+      <div class="profile-dropdown" role="menu" aria-label="Profile menu">
+        <button role="menuitem" tabindex="-1">Profile</button>
+        <button role="menuitem" tabindex="-1">Settings</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="main-content">
+    <nav class="sidebar" aria-label="Primary navigation">
+      <div class="nav-item active" tabindex="0" role="link" aria-current="page"><div class="nav-icon" aria-hidden="true">🏠</div><div class="nav-label">Home</div></div>
+      <div class="nav-item" tabindex="0" role="link"><div class="nav-icon" aria-hidden="true">🧭</div><div class="nav-label">Explore</div></div>
+      <div class="nav-item" tabindex="0" role="link"><div class="nav-icon" aria-hidden="true">🔔</div><div class="nav-label">Notifications</div></div>
+      <div class="nav-item" tabindex="0" role="link"><div class="nav-icon" aria-hidden="true">📩</div><div class="nav-label">Direct Messages</div></div>
+      <div class="nav-item" tabindex="0" role="link" style="margin-top:auto;"><div class="nav-icon" aria-hidden="true">⚙️</div><div class="nav-label">Settings</div></div>
+    </nav>
+
+    <main class="home-content" role="main" tabindex="0" aria-label="Home dashboard">
+      <section class="home-section">
+        <h2>🌟 Affirmation of the Day</h2>
+        <p class="affirmations">You are capable, worthy, and valued just as you are.</p>
+      </section>
+
+      <section class="home-section notifications" aria-live="polite">
+        <h2>🔔 New Notifications</h2>
+
+        <div class="notification-group" tabindex="0" role="button" aria-expanded="false" aria-label="Server Channels notifications. Click to expand or collapse.">
+          <div class="notification-header">
+            <strong>Server Channels</strong>
+            <span class="notification-summary">3 new mentions across your channels</span>
+          </div>
+          <ul class="notification-list" aria-hidden="true">
+            <li tabindex="0" role="link" aria-label="1 mention in #general. Click to open.">1 mention in #general</li>
+            <li tabindex="0" role="link" aria-label="2 mentions in #random. Click to open.">2 mentions in #random</li>
+          </ul>
+        </div>
+
+        <div class="notification-group" tabindex="0" role="button" aria-expanded="false" aria-label="Direct Messages notifications. Click to expand or collapse.">
+          <div class="notification-header">
+            <strong>Direct Messages</strong>
+            <span class="notification-summary">3 new messages from your contacts</span>
+          </div>
+          <ul class="notification-list" aria-hidden="true">
+            <li tabindex="0" role="link" aria-label="2 new direct messages from Alice Smith. Click to open.">2 new direct messages from Alice Smith</li>
+            <li tabindex="0" role="link" aria-label="1 new direct message from Bob Johnson. Click to open.">1 new direct message from Bob Johnson</li>
+          </ul>
+        </div>
+
+        <div class="notification-group" tabindex="0" role="button" aria-expanded="false" aria-label="System Updates notifications. Click to expand or collapse.">
+          <div class="notification-header">
+            <strong>System Updates</strong>
+            <span class="notification-summary">2 recent system updates available</span>
+          </div>
+          <ul class="notification-list" aria-hidden="true">
+            <li tabindex="0" role="link" aria-label="Version 1.2 released with new features. Click to open.">Version 1.2 released with new features</li>
+            <li tabindex="0" role="link" aria-label="Scheduled maintenance on June 25. Click to open.">Scheduled maintenance on June 25</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="home-section">
+        <h2>👥 Online Friends</h2>
+        <div class="online-friends" aria-label="List of online friends">
+          <div class="friend" tabindex="0">Alice Smith</div>
+          <div class="friend" tabindex="0">Bob Johnson</div>
+          <div class="friend" tabindex="0">Carol Lee</div>
+          <div class="friend" tabindex="0">David Kim</div>
+        </div>
+      </section>
+
+      <section class="home-section">
+        <h2>📝 Logged in as</h2>
+        <p>John Doe (JD)</p>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const groups = document.querySelectorAll('.notification-group');
+
+    groups.forEach(group => {
+      const header = group.querySelector('.notification-header');
+      const list = group.querySelector('.notification-list');
+
+      // Toggle expand/collapse group on click or keyboard enter/space
+      const toggleGroup = () => {
+        const expanded = group.getAttribute('aria-expanded') === 'true';
+
+        if (!expanded) {
+          // Collapse others
+          groups.forEach(g => {
+            if (g !== group) {
+              g.setAttribute('aria-expanded', 'false');
+              g.querySelector('.notification-list').classList.remove('expanded');
+              g.querySelector('.notification-list').setAttribute('aria-hidden', 'true');
+            }
+          });
+
+          // Expand this group
+          group.setAttribute('aria-expanded', 'true');
+          list.classList.add('expanded');
+          list.setAttribute('aria-hidden', 'false');
+
+          // Focus first notification for accessibility
+          const firstNotif = list.querySelector('li');
+          if (firstNotif) firstNotif.focus();
+
+        } else {
+          // Collapse this group
+          group.setAttribute('aria-expanded', 'false');
+          list.classList.remove('expanded');
+          list.setAttribute('aria-hidden', 'true');
+        }
+      };
+
+      group.addEventListener('click', (e) => {
+        // Avoid toggling if clicking a notification item
+        if (e.target.tagName.toLowerCase() === 'li') return;
+        toggleGroup();
+      });
+
+      group.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleGroup();
+        }
+      });
+
+      // Each notification item click opens that specific message
+      list.querySelectorAll('li').forEach(item => {
+        item.addEventListener('click', () => {
+          alert(`Opening message: "${item.textContent.trim()}"`);
+          // Replace alert with actual redirect/navigation code as needed
+          // Example: window.location.href = '/messages#some-id';
+        });
+
+        item.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            item.click();
+          }
+        });
+      });
+    });
+  </script>
+</body>
+</html>
