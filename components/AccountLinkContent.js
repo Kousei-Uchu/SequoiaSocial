@@ -6,7 +6,6 @@ import {
   faLink,
   faUnlink,
   faCheckCircle,
-  faCloud
 } from '@fortawesome/free-solid-svg-icons';
 import {
   faDiscord,
@@ -14,7 +13,8 @@ import {
   faXTwitter,
   faGoogle,
   faFacebookMessenger,
-  faTelegram
+  faTelegram,
+  faBluesky
 } from '@fortawesome/free-brands-svg-icons';
 
 const platforms = [
