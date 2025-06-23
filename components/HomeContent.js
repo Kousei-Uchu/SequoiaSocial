@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 
 export default function HomeContent() {
-  const [affirmation, setAffirmation] = useState("You are capable, worthy, and valued just as you are.");
+  const [affirmation, setAffirmation] = useState("Loading...");
   const [expandedGroup, setExpandedGroup] = useState(null);
 
   useEffect(() => {

@@ -29,42 +29,37 @@ export default function AccountLinkContent() {
   };
 
   return (
-    <section className="account-linking p-6 max-w-3xl mx-auto" aria-label="Channels and Direct Messages">
-      <h2 className="text-2xl font-bold mb-6 text-white">Link Your Messaging Accounts</h2>
-      <ul className="space-y-4">
+    <section className="account-linking" aria-label="Account linking options">
+      <h2>Link Your Messaging Accounts</h2>
+      <ul>
         {platforms.map((platform) => {
           const isLinked = linkedAccounts[platform.id];
           return (
-            <li
-              key={platform.id}
-              className="flex items-center justify-between bg-zinc-900 p-4 rounded-xl shadow hover:bg-zinc-800 transition-all"
-            >
-              <div className="flex items-center space-x-4">
+            <li key={platform.id}>
+              <div className="platform-info">
                 <Image
                   src={platform.icon}
                   alt={`${platform.name} icon`}
-                  width={28}
-                  height={28}
-                  className="rounded-md"
+                  width={32}
+                  height={32}
+                  className="platform-icon"
                 />
-                <div>
-                  <span className="font-medium text-white">{platform.name}</span>
-                  {isLinked && (
-                    <span className="ml-2 text-green-400 text-sm">Linked</span>
-                  )}
-                </div>
+                <span className="platform-name">
+                  {platform.name}
+                  {isLinked && <span className="status-linked">Linked</span>}
+                </span>
               </div>
               {isLinked ? (
                 <button
                   onClick={() => handleUnlink(platform.id)}
-                  className="bg-red-600 hover:bg-red-700 text-white px-4 py-1.5 rounded-lg text-sm"
+                  className="unlink-button"
                 >
                   Unlink
                 </button>
               ) : (
                 <button
                   onClick={() => handleLink(platform.id)}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg text-sm"
+                  className="link-button"
                 >
                   Link
                 </button>
