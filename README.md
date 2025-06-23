@@ -22,5 +22,6 @@ Neurospicy connection!
 - [ ] Implement Profile Customisation
 - [ ] Implement Statuses
 - [ ] Implement UI Customisation
+- [ ] Implement Parental Controls
 - [ ] Beta test
 - [ ] Release
