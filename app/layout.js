@@ -11,10 +11,6 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <Head>
-        {/* Font Awesome CDN */}
-        <link rel="stylesheet" href="https://use.fontawesome.com/releases/v6.4.0/css/all.css"></link>
-      </Head>
       <body>
         <Header />
         <div className="main-layout">
