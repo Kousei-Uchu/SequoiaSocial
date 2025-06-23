@@ -1,15 +1,30 @@
 'use client';
 
 import { useState } from 'react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { 
+  faLink,
+  faUnlink,
+  faCheckCircle,
+  faCloud
+} from '@fortawesome/free-solid-svg-icons';
+import {
+  faDiscord,
+  faWhatsapp,
+  faXTwitter,
+  faGoogle,
+  faFacebookMessenger,
+  faTelegram
+} from '@fortawesome/free-brands-svg-icons';
 
 const platforms = [
-  { id: 'discord', name: 'Discord', icon: 'fab fa-discord' },
-  { id: 'whatsapp', name: 'WhatsApp', icon: 'fab fa-whatsapp' },
-  { id: 'twitter', name: 'Twitter', icon: 'fab fa-x-twitter' },
-  { id: 'bluesky', name: 'Bluesky', icon: 'fas fa-cloud' },
-  { id: 'gmessages', name: 'Google Messages', icon: 'fab fa-google' },
-  { id: 'meta', name: 'Messenger / Instagram', icon: 'fab fa-facebook-messenger' },
-  { id: 'telegram', name: 'Telegram', icon: 'fab fa-telegram' },
+  { id: 'discord', name: 'Discord', icon: faDiscord },
+  { id: 'whatsapp', name: 'WhatsApp', icon: faWhatsapp },
+  { id: 'twitter', name: 'Twitter', icon: faXTwitter },
+  { id: 'bluesky', name: 'Bluesky', icon: faCloud },
+  { id: 'gmessages', name: 'Google Messages', icon: faGoogle },
+  { id: 'meta', name: 'Messenger / Instagram', icon: faFacebookMessenger },
+  { id: 'telegram', name: 'Telegram', icon: faTelegram },
 ];
 
 export default function AccountLinkContent() {
@@ -29,17 +44,27 @@ export default function AccountLinkContent() {
 
   return (
     <section className="account-linking" aria-label="Account linking options">
-      <h2><i className="fas fa-link mr-2"></i>Link Your Messaging Accounts</h2>
+      <h2>
+        <FontAwesomeIcon icon={faLink} className="mr-2" />
+        Link Your Messaging Accounts
+      </h2>
       <ul>
         {platforms.map((platform) => {
           const isLinked = linkedAccounts[platform.id];
           return (
             <li key={platform.id}>
               <div className="platform-info">
-                <i className={`${platform.icon} platform-icon`}></i>
+                <FontAwesomeIcon 
+                  icon={platform.icon} 
+                  className="platform-icon" 
+                />
                 <span className="platform-name">
                   {platform.name}
-                  {isLinked && <span className="status-linked"><i className="fas fa-check-circle ml-2"></i></span>}
+                  {isLinked && (
+                    <span className="status-linked">
+                      <FontAwesomeIcon icon={faCheckCircle} className="ml-2" />
+                    </span>
+                  )}
                 </span>
               </div>
               {isLinked ? (
@@ -47,14 +72,16 @@ export default function AccountLinkContent() {
                   onClick={() => handleUnlink(platform.id)}
                   className="unlink-button"
                 >
-                  <i className="fas fa-unlink mr-1"></i> Unlink
+                  <FontAwesomeIcon icon={faUnlink} className="mr-1" />
+                  Unlink
                 </button>
               ) : (
                 <button
                   onClick={() => handleLink(platform.id)}
                   className="link-button"
                 >
-                  <i className="fas fa-link mr-1"></i> Link
+                  <FontAwesomeIcon icon={faLink} className="mr-1" />
+                  Link
                 </button>
               )}
             </li>
