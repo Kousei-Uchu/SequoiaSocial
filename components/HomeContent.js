@@ -7,7 +7,7 @@ export default function HomeContent() {
   const [expandedGroup, setExpandedGroup] = useState(null);
 
   useEffect(() => {
-    fetch('affirmation-storage/affirmation.json')
+    fetch('/affirmations/data.json')
       .then(response => {
         if (!response.ok) throw new Error("Failed to load affirmation");
         return response.json();
