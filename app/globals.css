@@ -598,3 +598,29 @@ nav.sidebar:hover .nav-label {
   background: #c53030;
   transform: scale(1.03);
 }
+
+/* Add these to your globals.css */
+.platform-icon {
+  width: 1.5rem;
+  text-align: center;
+  font-size: 1.5rem;
+  margin-right: 1rem;
+  color: var(--text-light);
+}
+
+.fa-discord { color: #5865F2; }
+.fa-whatsapp { color: #25D366; }
+.fa-x-twitter { color: #000000; }
+.fa-cloud { color: #007AFF; } /* Bluesky */
+.fa-google { color: #1A73E8; }
+.fa-facebook-messenger { color: #0064E0; }
+.fa-telegram { color: #26A5E4; }
+
+.status-linked .fa-check-circle {
+  color: var(--accent);
+  font-size: 0.9rem;
+}
+
+button i {
+  margin-right: 0.3rem;
+}
