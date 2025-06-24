@@ -7,7 +7,7 @@ export default function Sidebar() {
 
   return (
     <nav className="sidebar" aria-label="Primary navigation">
-      <a href="/">
+      <a href="/home">
         <div
           className={`nav-item ${pathname === '/home' ? 'active' : ''}`}
           tabIndex="0"
