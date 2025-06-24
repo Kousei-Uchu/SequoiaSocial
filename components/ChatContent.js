@@ -73,7 +73,6 @@ export default function ChatContent() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsRoom, setSettingsRoom] = useState(null);
 
-  // Room settings state
   const [roomName, setRoomName] = useState('');
   const [roomTopic, setRoomTopic] = useState('');
   const [joinRule, setJoinRule] = useState('invite');
@@ -101,12 +100,10 @@ export default function ChatContent() {
 
         client.once('sync', (state) => {
           if (state === 'PREPARED') {
-            // Get direct messages
             const directMap = client.getAccountData('m.direct')?.getContent() || {};
             const dmRoomIds = new Set(Object.values(directMap).flat());
             const dmRooms = client.getRooms().filter(r => dmRoomIds.has(r.roomId));
             
-            // Get contact-linked rooms
             const contactLinks = client.getAccountData('com.yourapp.contact_linking')?.getContent()?.contacts || {};
             const filteredContacts = Object.entries(contactLinks).map(([contactId, data]) => {
               const roomObjects = {};

@@ -39,27 +39,22 @@ export default function ContactsContent({ matrixClient }) {
   const [selectedContact, setSelectedContact] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  // Load rooms and contacts on mount
   useEffect(() => {
     if (!matrixClient) return;
 
-    // Get DM room IDs from m.direct map
     const directMap = matrixClient.getAccountData('m.direct')?.getContent() || {};
     const dmRoomIds = new Set(Object.values(directMap).flat());
 
-    // Get joined DM rooms
     const dmRooms = matrixClient.getRooms().filter(r => dmRoomIds.has(r.roomId));
 
     setRooms(dmRooms);
 
-    // Extract unique contacts from DM rooms
-    // Assumes DM rooms with exactly 2 members: you + contact
     const me = matrixClient.getUserId();
     const contactsObj = {};
 
     dmRooms.forEach(room => {
       const members = room.getJoinedMembers().filter(m => m.userId !== me);
-      if (members.length !== 1) return; // Skip group chats
+      if (members.length !== 1) return;
 
       const contactUserId = members[0].userId;
       contactsObj[contactUserId] = { userId: contactUserId, displayName: members[0].name || contactUserId };
@@ -67,13 +62,11 @@ export default function ContactsContent({ matrixClient }) {
 
     setContacts(contactsObj);
 
-    // Load linked rooms mapping from account data
     const linkage = matrixClient.getAccountData('com.yourapp.contact_linking')?.getContent() || { contacts: {} };
     setLinkedData(linkage);
 
   }, [matrixClient]);
 
-  // Save linkage to account data
   const saveLinkedData = async (newLinkedData) => {
     if (!matrixClient) return;
     setSaving(true);
@@ -87,7 +80,6 @@ export default function ContactsContent({ matrixClient }) {
     setSaving(false);
   };
 
-  // Handle adding/removing linked rooms for a contact & platform
   const addLink = (contactId, platform, roomId) => {
     const newLinkedData = { ...linkedData };
     if (!newLinkedData.contacts[contactId]) newLinkedData.contacts[contactId] = { linkedRooms: {} };
@@ -103,12 +95,10 @@ export default function ContactsContent({ matrixClient }) {
     }
   };
 
-  // Get rooms filtered by platform for selection dropdown
   const getRoomsByPlatform = (platform) => {
-    // Here you should detect the platform from room metadata (simplified: by room name or alias)
     return rooms.filter(room => {
       const roomName = room.name?.toLowerCase() || '';
-      return roomName.includes(platform); // Simplified heuristic
+      return roomName.includes(platform);
     });
   };
 

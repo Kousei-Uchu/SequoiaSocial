@@ -409,12 +409,10 @@
       const header = group.querySelector('.notification-header');
       const list = group.querySelector('.notification-list');
 
-      // Toggle expand/collapse group on click or keyboard enter/space
       const toggleGroup = () => {
         const expanded = group.getAttribute('aria-expanded') === 'true';
 
         if (!expanded) {
-          // Collapse others
           groups.forEach(g => {
             if (g !== group) {
               g.setAttribute('aria-expanded', 'false');
@@ -423,17 +421,14 @@
             }
           });
 
-          // Expand this group
           group.setAttribute('aria-expanded', 'true');
           list.classList.add('expanded');
           list.setAttribute('aria-hidden', 'false');
 
-          // Focus first notification for accessibility
           const firstNotif = list.querySelector('li');
           if (firstNotif) firstNotif.focus();
 
         } else {
-          // Collapse this group
           group.setAttribute('aria-expanded', 'false');
           list.classList.remove('expanded');
           list.setAttribute('aria-hidden', 'true');
@@ -441,7 +436,6 @@
       };
 
       group.addEventListener('click', (e) => {
-        // Avoid toggling if clicking a notification item
         if (e.target.tagName.toLowerCase() === 'li') return;
         toggleGroup();
       });
@@ -453,12 +447,9 @@
         }
       });
 
-      // Each notification item click opens that specific message
       list.querySelectorAll('li').forEach(item => {
         item.addEventListener('click', () => {
           alert(`Opening message: "${item.textContent.trim()}"`);
-          // Replace alert with actual redirect/navigation code as needed
-          // Example: window.location.href = '/messages#some-id';
         });
 
         item.addEventListener('keydown', (e) => {

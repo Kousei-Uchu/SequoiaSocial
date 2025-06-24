@@ -28,7 +28,6 @@ const platforms = [
 ];
 
 export default function AccountLinkContent() {
-  // status can be: 'disconnected', 'connecting', 'connected', 'disconnecting', 'error'
   const [connectionStatus, setConnectionStatus] = useState(() => {
     const initialStatus = {};
     platforms.forEach(({ id }) => {
@@ -37,7 +36,6 @@ export default function AccountLinkContent() {
     return initialStatus;
   });
 
-  // Simulate async connect function
   const connectBridge = async (platformId) => {
     setConnectionStatus(prev => ({ ...prev, [platformId]: 'connecting' }));
     try {

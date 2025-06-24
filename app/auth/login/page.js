@@ -23,7 +23,7 @@ export default function LoginPage() {
           localStorage.setItem("mx_access_token", access_token);
           localStorage.setItem("mx_user_id", user_id);
           localStorage.setItem("mx_homeserver", homeserver);
-          router.replace("/chat"); // remove token from URL
+          router.replace("/chat");
         })
         .catch(err => {
           console.error("Token login failed:", err);
@@ -51,7 +51,7 @@ export default function LoginPage() {
   };
 
   const redirectToGoogle = () => {
-    const redirectUrl = encodeURIComponent("https://yourfrontend.com/login"); // replace with your frontend URL
+    const redirectUrl = encodeURIComponent("https://social.sequoiasupport.com/auth/login"); 
     window.location.href = `${homeserver}/_matrix/client/r0/login/sso/redirect/google?redirectUrl=${redirectUrl}`;
   };
 

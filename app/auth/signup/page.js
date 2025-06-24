@@ -14,7 +14,7 @@ export default function SignupPage() {
   const [loading, setLoading] = useState(false);
 
   const redirectToGoogle = () => {
-    const redirectUrl = encodeURIComponent("https://yourfrontend.com/login"); // replace with your frontend URL
+    const redirectUrl = encodeURIComponent("https://social.sequoiasupport.com/auth/login");
     window.location.href = `${homeserver}/_matrix/client/r0/login/sso/redirect/google?redirectUrl=${redirectUrl}`;
   };
 
@@ -30,14 +30,13 @@ export default function SignupPage() {
     setLoading(true);
 
     try {
-      // Call Synapse registration endpoint
       const res = await fetch(`${homeserver}/_matrix/client/r0/register?kind=user`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: username,
           password: password,
-          auth: { type: 'm.login.dummy' } // minimal dummy auth for registration
+          auth: { type: 'm.login.dummy' }
         }),
       });
 
@@ -46,7 +45,6 @@ export default function SignupPage() {
         throw new Error(errData.error || 'Registration failed');
       }
 
-      // On success redirect to login page
       router.push('/login');
     } catch (err) {
       setErrorMsg(err.message);
