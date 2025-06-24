@@ -59,7 +59,18 @@ export default function Sidebar() {
           aria-current={pathname === '/chat/rooms' ? 'page' : undefined}
         >
           <div className="nav-icon" aria-hidden="true">📩</div>
-          <div className="nav-label">Direct Messages</div>
+          <div className="nav-label">Group Messages</div>
+        </div>
+      </a>
+      <a href="/contacts">
+        <div
+          className={`nav-item ${pathname === '/contacts' ? 'active' : ''}`}
+          tabIndex="0"
+          role="link"
+          aria-current={pathname === '/contacts' ? 'page' : undefined}
+        >
+          <div className="nav-icon" aria-hidden="true">📩</div>
+          <div className="nav-label">Contacts</div>
         </div>
       </a>
     </nav>
