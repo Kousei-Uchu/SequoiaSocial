@@ -1,4 +1,4 @@
-import ContactsContent from '../../components/ContactsContent.jsx';
+import ContactsContent from '../../components/ContactsContent';
 
 export default function Home() {
   return <ContactsContent />;
