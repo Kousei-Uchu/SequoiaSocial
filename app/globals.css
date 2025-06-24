@@ -624,3 +624,7 @@ nav.sidebar:hover .nav-label {
 button i {
   margin-right: 0.3rem;
 }
+
+a {
+  color: inherit;
+}

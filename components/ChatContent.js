@@ -1,77 +1,102 @@
 'use client';
 
-import { useState } from 'react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import {
-  faDiscord,
-  faWhatsapp,
-  faTelegram,
-  faFacebookMessenger,
-  faInstagram,
-  faGoogle,
-  faTwitter,
-  faSignal,
-} from '@fortawesome/free-brands-svg-icons';
+import { useEffect, useState } from 'react';
+import sdk from 'matrix-js-sdk';
+import { useRouter } from 'next/navigation';
 
 export default function ChatContent() {
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      sender: 'John Doe',
-      initials: 'JD',
-      time: '2025-06-21T14:30',
-      content: 'Welcome to Sequoia Social! This is our general channel for updates and discussion.',
-      platform: 'discord',
-    },
-    {
-      id: 2,
-      sender: 'Alice Smith',
-      initials: 'AS',
-      time: '2025-06-21T14:45',
-      content: 'Looks amazing so far! Love the clean dark mode. 🎉',
-      platform: 'instagram',
-    },
-  ]);
+  const router = useRouter();
 
+  const [matrixClient, setMatrixClient] = useState(null);
+  const [rooms, setRooms] = useState([]);
+  const [activeRoom, setActiveRoom] = useState(null);
+  const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState('');
 
-  const platformColors = {
-    discord: ['#5865F2', '#4854cc'],
-    whatsapp: ['#25D366', '#1cb955'],
-    telegram: ['#0088CC', '#007ab8'],
-    messenger: ['#0078FF', '#00C6FF'],
-    instagram: ['#F58529', '#DD2A7B'],
-    google: ['#1A73E8', '#185abc'],
-    twitter: ['#1DA1F2', '#1991da'],
-    signal: ['#3A76F0', '#2f62d6'],
-    default: ['#444', '#333'],
-  };
+  useEffect(() => {
+    async function initMatrixClient() {
+      try {
+        let accessToken = localStorage.getItem('mx_access_token');
+        let userId = localStorage.getItem('mx_user_id');
+        let homeserver = localStorage.getItem('mx_homeserver') || 'https://matrix.social.sequoiasupport.com';
 
-  const platformIcons = {
-    discord: faDiscord,
-    whatsapp: faWhatsapp,
-    telegram: faTelegram,
-    messenger: faFacebookMessenger,
-    instagram: faInstagram,
-    google: faGoogle,
-    twitter: faTwitter,
-    signal: faSignal,
-  };
+        // Check URL for SSO login token
+        const params = new URLSearchParams(window.location.search);
+        const loginToken = params.get('loginToken');
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!newMessage.trim()) return;
+        if (loginToken) {
+          // Exchange loginToken for accessToken
+          const client = sdk.createClient(homeserver);
+          const loginResponse = await client.login('m.login.token', { token: loginToken });
+          accessToken = loginResponse.access_token;
+          userId = loginResponse.user_id;
 
-    const newMsg = {
-      id: messages.length + 1,
-      sender: 'John Doe',
-      initials: 'JD',
-      time: new Date().toISOString(),
-      content: newMessage,
-      platform: 'discord', // change based on user/platform input if needed
+          // Save session
+          localStorage.setItem('mx_access_token', accessToken);
+          localStorage.setItem('mx_user_id', userId);
+          localStorage.setItem('mx_homeserver', homeserver);
+
+          // Clean URL
+          window.history.replaceState({}, document.title, window.location.pathname);
+
+          router.replace('/chat'); // or wherever your chat page is
+          return; // Wait for reload
+        }
+
+        if (!accessToken || !userId) {
+          setErrorMsg('You must log in first.');
+          setLoading(false);
+          return;
+        }
+
+        const client = sdk.createClient({
+          baseUrl: homeserver,
+          accessToken,
+          userId,
+        });
+
+        client.startClient();
+
+        client.once('sync', (state) => {
+          if (state === 'PREPARED') {
+            const joinedRooms = client.getRooms();
+            setRooms(joinedRooms);
+            setActiveRoom(joinedRooms[0]);
+            setMessages(joinedRooms[0]?.timeline || []);
+            setMatrixClient(client);
+            setLoading(false);
+          }
+        });
+
+        // Listen for new messages (optional)
+        client.on('Room.timeline', (event, room, toStartOfTimeline) => {
+          if (toStartOfTimeline) return; // Ignore old events
+          if (room.roomId === activeRoom?.roomId && event.getType() === 'm.room.message') {
+            setMessages((msgs) => [...msgs, event]);
+          }
+        });
+      } catch (err) {
+        console.error('Matrix init error:', err);
+        setErrorMsg('Failed to connect to Matrix.');
+        setLoading(false);
+      }
+    }
+
+    initMatrixClient();
+
+    // Cleanup on unmount
+    return () => {
+      if (matrixClient) matrixClient.stopClient();
     };
+  }, [router]);
 
-    setMessages([...messages, newMsg]);
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !matrixClient || !activeRoom) return;
+
+    await matrixClient.sendTextMessage(activeRoom.roomId, newMessage);
     setNewMessage('');
   };
 
@@ -80,92 +105,66 @@ export default function ChatContent() {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  if (loading) {
+    return <div>Loading chat...</div>;
+  }
+
+  if (errorMsg) {
+    return <div style={{ color: 'red' }}>{errorMsg}</div>;
+  }
+
   return (
-    <>
-      <div className="main-layout">
-        <section className="channel-list" aria-label="Channels and Direct Messages">
-          <div className="search-bar">
-            <input type="text" placeholder="Search channels..." aria-label="Search channels" />
+    <div className="main-layout">
+      <section className="channel-list">
+        <div className="search-bar">
+          <input type="text" placeholder="Search rooms..." />
+        </div>
+        <h4>📩 Rooms</h4>
+        {rooms.map((room) => (
+          <div
+            key={room.roomId}
+            className={`channel-item ${activeRoom?.roomId === room.roomId ? 'active' : ''}`}
+            onClick={() => {
+              setActiveRoom(room);
+              setMessages(room.timeline);
+            }}
+          >
+            <div className="channel-icon">#</div>
+            <span>{room.name || room.roomId}</span>
           </div>
+        ))}
+      </section>
 
-          <h4>🏷️ Channels</h4>
-          <div className="channel-item active" tabIndex="0" role="button">
-            <div className="channel-icon" aria-hidden="true">#</div>
-            <span>general</span>
-            <div className="status-dot" aria-label="Online status"></div>
-          </div>
-          <div className="channel-item" tabIndex="0" role="button">
-            <div className="channel-icon" aria-hidden="true">#</div>
-            <span>random</span>
-            <div className="status-dot" aria-label="Online status"></div>
-          </div>
-          <div className="channel-item" tabIndex="0" role="button">
-            <div className="channel-icon" aria-hidden="true">#</div>
-            <span>help</span>
-            <div className="status-dot offline" aria-label="Offline status"></div>
-          </div>
+      <section className="message-window">
+        <div className="messages-container">
+          {messages.map((event) => {
+            const content = event.getContent();
+            if (content.msgtype !== 'm.text') return null;
 
-          <h4>📩 DMs</h4>
-          <div className="channel-item" tabIndex="0" role="button">
-            <div className="channel-icon" style={{ borderRadius: '50%' }} aria-hidden="true">A</div>
-            <span>Alice Smith</span>
-            <div className="status-dot" aria-label="Online status"></div>
-          </div>
-          <div className="channel-item" tabIndex="0" role="button">
-            <div className="channel-icon" style={{ borderRadius: '50%' }} aria-hidden="true">B</div>
-            <span>Bob Johnson</span>
-            <div className="status-dot offline" aria-label="Offline status"></div>
-          </div>
-        </section>
-
-        <section className="message-window" aria-label="Message window">
-          <div className="messages-container" tabIndex="0">
-            {messages.map(message => {
-              const [colorStart, colorEnd] = platformColors[message.platform] || platformColors.default;
-              const icon = platformIcons[message.platform];
-
-              return (
-                <div
-                  key={message.id}
-                  className="message"
-                  tabIndex="0"
-                  style={{
-                    background: `linear-gradient(135deg, ${colorStart}, ${colorEnd})`,
-                    color: 'white',
-                    padding: '0.75rem',
-                    borderRadius: '0.5rem',
-                    marginBottom: '0.75rem'
-                  }}
-                >
-                  <div className="message-header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    {icon && <FontAwesomeIcon icon={icon} title={message.platform} />}
-                    <div className="message-avatar" aria-hidden="true">{message.initials}</div>
-                    <span>{message.sender}</span>
-                    <time
-                      className="message-time"
-                      dateTime={message.time}
-                      style={{ fontSize: '0.8rem', color: '#e0e0e0', marginLeft: 'auto' }}
-                    >
-                      {formatTime(message.time)}
-                    </time>
-                  </div>
-                  <div>{message.content}</div>
+            return (
+              <div key={event.getId()} className="message matrix-message">
+                <div className="message-header">
+                  <div className="message-avatar">{event.getSender()?.[1] || '?'}</div>
+                  <span>{event.getSender()}</span>
+                  <time className="message-time" dateTime={event.getTs()}>
+                    {formatTime(event.getTs())}
+                  </time>
                 </div>
-              );
-            })}
-          </div>
+                <div>{content.body}</div>
+              </div>
+            );
+          })}
+        </div>
 
-          <form className="message-input" aria-label="Send a message" onSubmit={handleSubmit}>
-            <textarea
-              placeholder="Type your message here..."
-              aria-label="Message input"
-              value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-            />
-            <button type="submit">Send</button>
-          </form>
-        </section>
-      </div>
-    </>
+        <form className="message-input" onSubmit={handleSubmit}>
+          <textarea
+            placeholder="Type your message here..."
+            value={newMessage}
+            onChange={(e) => setNewMessage(e.target.value)}
+          />
+          <button type="submit">Send</button>
+        </form>
+      </section>
+    </div>
   );
 }
