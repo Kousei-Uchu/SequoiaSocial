@@ -1,6 +1,17 @@
 'use client';
 
 import { useState } from 'react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import {
+  faDiscord,
+  faWhatsapp,
+  faTelegram,
+  faFacebookMessenger,
+  faInstagram,
+  faGoogle,
+  faTwitter,
+  faSignal,
+} from '@fortawesome/free-brands-svg-icons';
 
 export default function ChatContent() {
   const [messages, setMessages] = useState([
@@ -9,17 +20,43 @@ export default function ChatContent() {
       sender: 'John Doe',
       initials: 'JD',
       time: '2025-06-21T14:30',
-      content: 'Welcome to Sequoia Social! This is our general channel for updates and discussion.'
+      content: 'Welcome to Sequoia Social! This is our general channel for updates and discussion.',
+      platform: 'discord',
     },
     {
       id: 2,
       sender: 'Alice Smith',
       initials: 'AS',
       time: '2025-06-21T14:45',
-      content: 'Looks amazing so far! Love the clean dark mode. 🎉'
-    }
+      content: 'Looks amazing so far! Love the clean dark mode. 🎉',
+      platform: 'instagram',
+    },
   ]);
+
   const [newMessage, setNewMessage] = useState('');
+
+  const platformColors = {
+    discord: ['#5865F2', '#4854cc'],
+    whatsapp: ['#25D366', '#1cb955'],
+    telegram: ['#0088CC', '#007ab8'],
+    messenger: ['#0078FF', '#00C6FF'],
+    instagram: ['#F58529', '#DD2A7B'],
+    google: ['#1A73E8', '#185abc'],
+    twitter: ['#1DA1F2', '#1991da'],
+    signal: ['#3A76F0', '#2f62d6'],
+    default: ['#444', '#333'],
+  };
+
+  const platformIcons = {
+    discord: faDiscord,
+    whatsapp: faWhatsapp,
+    telegram: faTelegram,
+    messenger: faFacebookMessenger,
+    instagram: faInstagram,
+    google: faGoogle,
+    twitter: faTwitter,
+    signal: faSignal,
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -30,7 +67,8 @@ export default function ChatContent() {
       sender: 'John Doe',
       initials: 'JD',
       time: new Date().toISOString(),
-      content: newMessage
+      content: newMessage,
+      platform: 'discord', // change based on user/platform input if needed
     };
 
     setMessages([...messages, newMsg]);
@@ -81,27 +119,44 @@ export default function ChatContent() {
 
       <section className="message-window" aria-label="Message window">
         <div className="messages-container" tabIndex="0">
-          {messages.map(message => (
-            <div key={message.id} className="message" tabIndex="0">
-              <div className="message-header">
-                <div className="message-avatar" aria-hidden="true">{message.initials}</div>
-                <span>{message.sender}</span>
-                <time 
-                  className="message-time" 
-                  dateTime={message.time}
-                  style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}
-                >
-                  {formatTime(message.time)}
-                </time>
+          {messages.map(message => {
+            const [colorStart, colorEnd] = platformColors[message.platform] || platformColors.default;
+            const icon = platformIcons[message.platform];
+
+            return (
+              <div
+                key={message.id}
+                className="message"
+                tabIndex="0"
+                style={{
+                  background: `linear-gradient(135deg, ${colorStart}, ${colorEnd})`,
+                  color: 'white',
+                  padding: '0.75rem',
+                  borderRadius: '0.5rem',
+                  marginBottom: '0.75rem'
+                }}
+              >
+                <div className="message-header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  {icon && <FontAwesomeIcon icon={icon} title={message.platform} />}
+                  <div className="message-avatar" aria-hidden="true">{message.initials}</div>
+                  <span>{message.sender}</span>
+                  <time
+                    className="message-time"
+                    dateTime={message.time}
+                    style={{ fontSize: '0.8rem', color: '#e0e0e0', marginLeft: 'auto' }}
+                  >
+                    {formatTime(message.time)}
+                  </time>
+                </div>
+                <div>{message.content}</div>
               </div>
-              <div>{message.content}</div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         <form className="message-input" aria-label="Send a message" onSubmit={handleSubmit}>
-          <textarea 
-            placeholder="Type your message here..." 
+          <textarea
+            placeholder="Type your message here..."
             aria-label="Message input"
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
