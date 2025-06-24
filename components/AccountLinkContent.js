@@ -28,18 +28,53 @@ const platforms = [
 ];
 
 export default function AccountLinkContent() {
-  const [linkedAccounts, setLinkedAccounts] = useState({});
+  // status can be: 'disconnected', 'connecting', 'connected', 'disconnecting', 'error'
+  const [connectionStatus, setConnectionStatus] = useState(() => {
+    const initialStatus = {};
+    platforms.forEach(({ id }) => {
+      initialStatus[id] = 'disconnected';
+    });
+    return initialStatus;
+  });
 
-  const handleLink = (platformId) => {
-    setLinkedAccounts((prev) => ({ ...prev, [platformId]: true }));
+  // Simulate async connect function
+  const connectBridge = async (platformId) => {
+    setConnectionStatus(prev => ({ ...prev, [platformId]: 'connecting' }));
+    try {
+      const res = await fetch(`/api/bridges/${platformId}/connect`, { method: 'POST' });
+      if (!res.ok) throw new Error('Failed to connect');
+      setConnectionStatus(prev => ({ ...prev, [platformId]: 'connected' }));
+    } catch (err) {
+      setConnectionStatus(prev => ({ ...prev, [platformId]: 'error' }));
+    }
   };
 
-  const handleUnlink = (platformId) => {
-    setLinkedAccounts((prev) => {
-      const newState = { ...prev };
-      delete newState[platformId];
-      return newState;
-    });
+  const disconnectBridge = async (platformId) => {
+    setConnectionStatus(prev => ({ ...prev, [platformId]: 'disconnecting' }));
+    try {
+      const res = await fetch(`/api/bridges/${platformId}/disconnect`, { method: 'POST' });
+      if (!res.ok) throw new Error('Failed to disconnect');
+      setConnectionStatus(prev => ({ ...prev, [platformId]: 'disconnected' }));
+    } catch (err) {
+      setConnectionStatus(prev => ({ ...prev, [platformId]: 'error' }));
+    }
+  };
+
+  const getStatusMessage = (status) => {
+    switch(status) {
+      case 'connected':
+        return 'Connected';
+      case 'disconnected':
+        return 'Disconnected';
+      case 'connecting':
+        return 'Connecting...';
+      case 'disconnecting':
+        return 'Disconnecting...';
+      case 'error':
+        return 'Error! Try again.';
+      default:
+        return '';
+    }
   };
 
   return (
@@ -50,7 +85,11 @@ export default function AccountLinkContent() {
       </h2>
       <ul>
         {platforms.map((platform) => {
-          const isLinked = linkedAccounts[platform.id];
+          const status = connectionStatus[platform.id];
+          const isConnected = status === 'connected';
+          const isLoading = status === 'connecting' || status === 'disconnecting';
+          const isError = status === 'error';
+
           return (
             <li key={platform.id}>
               <div className="platform-info">
@@ -60,25 +99,30 @@ export default function AccountLinkContent() {
                 />
                 <span className="platform-name">
                   {platform.name}
-                  {isLinked && (
+                  {isConnected && (
                     <span className="status-linked">
                       <FontAwesomeIcon icon={faCheckCircle} className="ml-2" />
                     </span>
                   )}
                 </span>
               </div>
-              {isLinked ? (
+              <div className="status-message" aria-live="polite" style={{ marginBottom: '0.25rem', fontSize: '0.875rem', color: isError ? 'red' : 'inherit' }}>
+                {getStatusMessage(status)}
+              </div>
+              {isConnected ? (
                 <button
-                  onClick={() => handleUnlink(platform.id)}
+                  onClick={() => disconnectBridge(platform.id)}
                   className="unlink-button"
+                  disabled={isLoading}
                 >
                   <FontAwesomeIcon icon={faUnlink} className="mr-1" />
                   Unlink
                 </button>
               ) : (
                 <button
-                  onClick={() => handleLink(platform.id)}
+                  onClick={() => connectBridge(platform.id)}
                   className="link-button"
+                  disabled={isLoading}
                 >
                   <FontAwesomeIcon icon={faLink} className="mr-1" />
                   Link
