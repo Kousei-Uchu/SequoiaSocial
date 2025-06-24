@@ -1,5 +1,5 @@
-import ContactsContent from '../../components/ContactsContent.jsx';
+import AccountLinkContent from '../../components/AccountLinkContent';
 
 export default function Home() {
-  return <ContactsContent />;
+  return <AccountLinkContent />;
 }
