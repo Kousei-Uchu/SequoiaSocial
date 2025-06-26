@@ -1,7 +1,7 @@
 export async function GET() {
   return new Response(
     JSON.stringify({
-      "m.server": "matrix.social.sequoiasupport.com:443"
+      "m.server": "matrix.social.sequoiasupport.com:8448"
     }),
     {
       status: 200,
