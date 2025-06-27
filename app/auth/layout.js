@@ -1,3 +1,8 @@
 export default function AuthLayout({ children }) {
-  return <>{children}</>;
+  return <>
+    <Head>
+      <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+    </Head>
+    {children}
+  </>;
 }
