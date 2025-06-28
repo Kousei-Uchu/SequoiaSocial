@@ -9,12 +9,12 @@ Neurospicy connection! An Chat Platform in development for Neurodivergent Indivi
 - [ ] Gather Helpers
 ## Initial Development
 - [x] First UI Design
-- [ ] Feedback
+- [x] Feedback
 - [ ] Second UI Design
 - [ ] Feedback
 - [ ] Third UI design
-- [ ] Set up test backend
-- [ ] Implement Auth
+- [x] Set up test backend
+- [x] Implement Auth
 - [ ] Implement Bridges
 - [ ] Implement Basic Direct Messages
 - [ ] Implement Group Messages

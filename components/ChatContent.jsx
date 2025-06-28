@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import * as sdk from 'matrix-js-sdk';
 import { useRouter } from 'next/navigation';
 import { marked } from 'marked';
@@ -25,6 +25,7 @@ import {
   faExclamationTriangle,
   faTimes,
   faUserShield,
+  faPlus,
 } from '@fortawesome/free-solid-svg-icons';
 
 // FontAwesome configuration
@@ -81,6 +82,7 @@ export default function ChatContent() {
   const [errorMsg, setErrorMsg] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsRoom, setSettingsRoom] = useState(null);
+  const [roomJoinError, setRoomJoinError] = useState(null);
 
   const [roomName, setRoomName] = useState('');
   const [roomTopic, setRoomTopic] = useState('');
@@ -95,7 +97,64 @@ export default function ChatContent() {
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const isPaginatingRef = useRef(false);
+  const roomCacheRef = useRef(new Set());
 
+  // Handle unknown rooms
+  const handleUnknownRoom = useCallback(async (roomId) => {
+    if (!matrixClient || roomCacheRef.current.has(roomId)) return;
+    
+    roomCacheRef.current.add(roomId);
+    console.warn(`Attempting to recover unknown room: ${roomId}`);
+    
+    try {
+      // First try to get from store
+      let room = matrixClient.getRoom(roomId);
+      
+      if (!room) {
+        // If not in store, try to join
+        console.log(`Joining room ${roomId}`);
+        room = await matrixClient.joinRoom(roomId);
+      }
+      
+      if (room && !rooms.some(r => r.roomId === roomId)) {
+        console.log(`Adding room ${roomId} to state`);
+        setRooms(prev => [...prev, room]);
+        
+        // If no active room, set this as active
+        if (!activeRoom) {
+          setActiveRoom(room);
+          setMessages(room.timeline || []);
+        }
+      }
+    } catch (err) {
+      console.error(`Failed to handle unknown room ${roomId}:`, err);
+      setRoomJoinError(`Failed to join room ${roomId}: ${err.message}`);
+    }
+  }, [matrixClient, rooms, activeRoom]);
+
+  // Enhanced event handler with room recovery
+  const handleNewEvent = useCallback((event, room, toStartOfTimeline) => {
+    if (toStartOfTimeline || !event || event.getType() !== 'm.room.message') return;
+    
+    // If room is unknown, try to recover it first
+    if (!room && event.getRoomId()) {
+      handleUnknownRoom(event.getRoomId());
+      return;
+    }
+
+    setMessages(prev => {
+      // Deduplicate messages
+      if (prev.some(m => m.getId() === event.getId())) return prev;
+      return [...prev, event];
+    });
+
+    if (room?.roomId === activeRoom?.roomId) {
+      detectPlatform([...messages, event]);
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [activeRoom, messages, handleUnknownRoom]);
+
+  // Initialize Matrix client
   useEffect(() => {
     let unmounted = false;
     let client = null;
@@ -103,7 +162,7 @@ export default function ChatContent() {
     async function initMatrixClient() {
       try {
         setLoadingStates(prev => ({ ...prev, initial: true }));
-
+        
         // Fetch access token and user id from your backend API
         const res = await fetch('/api/get-matrix-token');
         if (!res.ok) throw new Error('Not authenticated');
@@ -116,6 +175,9 @@ export default function ChatContent() {
 
         const homeserver = 'https://matrix.social.sequoiasupport.com';
 
+        // Enable debug logging
+        localStorage.debug = 'matrix*';
+
         // Create Matrix client instance
         client = sdk.createClient({
           baseUrl: homeserver,
@@ -123,7 +185,8 @@ export default function ChatContent() {
           userId: user_id,
           timelineSupport: true,
           cryptoStore: new sdk.IndexedDBCryptoStore(indexedDB, 'matrix-js-sdk-crypto-store'),
-          useAuthorizationHeader: true
+          useAuthorizationHeader: true,
+          unstableClientRelationAggregation: true,
         });
 
         // Initialize end-to-end encryption if available
@@ -138,6 +201,14 @@ export default function ChatContent() {
           console.warn("Crypto initialization failed", cryptoErr);
           setLoadingStates(prev => ({ ...prev, encryption: false }));
         }
+
+        // Add global room state handler
+        client.on('RoomState.events', (event, state) => {
+          if (!client.getRoom(state.roomId)) {
+            console.warn(`Received state event for unknown room: ${state.roomId}`);
+            handleUnknownRoom(state.roomId);
+          }
+        });
 
         // Start syncing
         client.startClient();
@@ -172,6 +243,9 @@ export default function ChatContent() {
           return { contactId, linkedRooms: data.linkedRooms, roomObjects };
         });
 
+        // Initialize room cache
+        dmRooms.forEach(room => roomCacheRef.current.add(room.roomId));
+
         setMatrixClient(client);
         setRooms(dmRooms);
         setContacts(filteredContacts);
@@ -187,27 +261,20 @@ export default function ChatContent() {
         // Add event listener for new messages
         client.on('Room.timeline', handleNewEvent);
 
+        // Add room listener for new rooms
+        client.on('Room', (room) => {
+          if (!roomCacheRef.current.has(room.roomId)) {
+            roomCacheRef.current.add(room.roomId);
+            setRooms(prev => [...prev, room]);
+          }
+        });
+
       } catch (err) {
         console.error('Matrix client init failed:', err);
         if (!unmounted) {
           setErrorMsg(`Failed to connect to Matrix: ${err.message}`);
           setLoadingStates(prev => ({ ...prev, initial: false }));
         }
-      }
-    }
-
-    function handleNewEvent(event, room, toStartOfTimeline) {
-      if (toStartOfTimeline || !event || event.getType() !== 'm.room.message') return;
-
-      setMessages(prev => {
-        // Deduplicate messages
-        if (prev.some(m => m.getId() === event.getId())) return prev;
-        return [...prev, event];
-      });
-
-      if (room.roomId === activeRoom?.roomId) {
-        detectPlatform([...messages, event]);
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }
     }
 
@@ -219,11 +286,14 @@ export default function ChatContent() {
       unmounted = true;
       if (client) {
         client.removeListener('Room.timeline', handleNewEvent);
+        client.removeListener('RoomState.events');
+        client.removeListener('Room');
         client.stopClient();
       }
     };
-  }, [router]);
+  }, [router, handleNewEvent, handleUnknownRoom]);
 
+  // Room settings effect
   useEffect(() => {
     if (!activeRoom || !matrixClient) return;
 
@@ -398,16 +468,15 @@ export default function ChatContent() {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  async function createDM(userId) {
+  const createDM = async (userId) => {
     if (!matrixClient) return;
 
     try {
       const options = {
-        preset: 'trusted_private_chat', // Matrix preset for DMs
-        is_direct: true, // Mark as DM
-        invite: [userId], // User to invite
-        visibility: 'private', // Make room private
-        // Optional: Enable encryption
+        preset: 'trusted_private_chat',
+        is_direct: true,
+        invite: [userId],
+        visibility: 'private',
         initial_state: [{
           type: 'm.room.encryption',
           state_key: '',
@@ -419,12 +488,26 @@ export default function ChatContent() {
 
       const { room_id } = await matrixClient.createRoom(options);
       console.log('Created DM room:', room_id);
+      
+      // Add to room cache
+      roomCacheRef.current.add(room_id);
+      
+      // Wait a moment for the room to be available
+      setTimeout(() => {
+        const room = matrixClient.getRoom(room_id);
+        if (room) {
+          setRooms(prev => [...prev, room]);
+          setActiveRoom(room);
+          setMessages(room.timeline || []);
+        }
+      }, 1000);
+      
       return room_id;
     } catch (err) {
       console.error('Failed to create DM:', err);
       setErrorMsg('Failed to create DM: ' + err.message);
     }
-  }
+  };
 
   const promptForDM = () => {
     const userId = prompt("Enter Matrix User ID (e.g. @user:server.com)");
@@ -447,8 +530,14 @@ export default function ChatContent() {
           onClick={() => promptForDM()}
           className="new-dm-button"
         >
-          + New DM
+          <FontAwesomeIcon icon={faPlus} /> New DM
         </button>
+
+        {roomJoinError && (
+          <div className="error-message" style={{ margin: '0.5rem 0' }}>
+            {roomJoinError}
+          </div>
+        )}
 
         <h4>📩 Direct Messages</h4>
         {rooms.map((room) => {
@@ -959,6 +1048,11 @@ export default function ChatContent() {
           border-radius: 4px;
           margin: 0.5rem 0;
           cursor: pointer;
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
         }
 
         .new-dm-button:hover {
