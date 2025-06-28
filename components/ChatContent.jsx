@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import * as sdk from 'matrix-js-sdk';
-import * as matrixCrypto from '@matrix-org/matrix-sdk-crypto-js';
+import Olm from 'olm';
 import { useRouter } from 'next/navigation';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -347,19 +347,13 @@ export default function ChatContent() {
   // Proper crypto initialization should look like:
   async function initCrypto(client) {
     try {
-      // 1. Initialize WASM first
-      await matrixCrypto.initAsync();
+      // Initialize OLM first
+      await Olm.init();
 
-      // 2. Then init client crypto
-      await client.initCrypto({
-        // Important config:
-        useLivekit: false,
-        cryptoCallbacks: {
-          onSecretRequested: (request) => Promise.resolve(null)
-        }
-      });
+      // Then init client crypto
+      await client.initCrypto();
 
-      // 3. Bootstrap cross-signing
+      // Bootstrap cross-signing
       await client.bootstrapCrossSigning({
         authUploadDeviceSigningKeys: async (makeRequest) => makeRequest({})
       });
@@ -473,6 +467,11 @@ export default function ChatContent() {
           timelineSupport: true,
           useAuthorizationHeader: true,
           lazyLoadMembers: true,
+          // Add this for OLM:
+          cryptoStore: new sdk.IndexedDBCryptoStore(
+            indexedDB,
+            'matrix-js-sdk-crypto-store'
+          ),
           fetchFn: (url, options) => {
             return fetch(url, {
               ...options,
@@ -590,20 +589,6 @@ export default function ChatContent() {
       }
     }, [matrixClient]);
 
-    useEffect(() => {
-      async function verifyWASM() {
-        try {
-          const { default: wasm } = await import('@matrix-org/matrix-sdk-crypto-wasm');
-          console.log('WASM loaded successfully');
-          return true;
-        } catch (e) {
-          console.error('WASM load failed:', e);
-          return false;
-        }
-      }
-      verifyWASM();
-    }, []);
-
     // Network status listener
     const handleOnline = () => {
       if (connectionState === 'disconnected' && !loadingStates.initial) {
@@ -678,7 +663,7 @@ export default function ChatContent() {
           {matrixClient?.isCryptoEnabled?.() ? (
             <div className="crypto-status-good">
               <FontAwesomeIcon icon={faLock} />
-              End-to-end encryption enabled
+              End-to-end encryption enabled (OLM)
             </div>
           ) : (
             <div className="crypto-status-bad">

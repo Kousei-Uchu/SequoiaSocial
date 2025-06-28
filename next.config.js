@@ -1,13 +1,6 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  webpack: (config) => {
-    config.experiments = {
-      asyncWebAssembly: true,
-      layers: true
-    };
-    return config;
-  },
-  transpilePackages: ['@matrix-org/matrix-sdk-crypto']
+module.exports = {
+  experimental: {
+    serverComponentsExternalPackages: ['olm'],
+    webpackBuildWorker: true
+  }
 }
-
-module.exports = nextConfig
