@@ -20,7 +20,6 @@ import {
 const platforms = [
   { id: 'discord', name: 'Discord', icon: faDiscord },
   { id: 'whatsapp', name: 'WhatsApp', icon: faWhatsapp },
-  { id: 'twitter', name: 'Twitter', icon: faXTwitter },
   { id: 'bluesky', name: 'Bluesky', icon: faBluesky },
   { id: 'gmessages', name: 'Google Messages', icon: faGoogle },
   { id: 'meta', name: 'Messenger / Instagram', icon: faFacebookMessenger },
