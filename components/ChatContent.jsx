@@ -65,40 +65,52 @@ const guestAccessOptions = [
   { value: 'forbidden', label: 'Guests Forbidden' },
 ];
 
-// Dynamic OLM loader
+// Enhanced OLM loader with multiple fallbacks
 const loadOlm = async () => {
-  if (typeof window !== 'undefined') {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    // Try to load from package first
     try {
-      // Try loading from CDN as fallback
-      const OLM_CDN_URL = 'https://unpkg.com/@matrix-org/olm@3.2.4/olm.wasm';
-
-      // First try package import
-      try {
-        const Olm = await import('@matrix-org/olm');
-        await Olm.default.init();
-        return Olm.default;
-      } catch (err) {
-        console.log('Package import failed, trying CDN fallback...');
-      }
-
-      // CDN fallback
-      const wasmResponse = await fetch(OLM_CDN_URL);
-      if (!wasmResponse.ok) throw new Error('Failed to fetch WASM');
-
-      const wasmBuffer = await wasmResponse.arrayBuffer();
       const Olm = await import('@matrix-org/olm');
-      Olm.default.initOlm = () => { };
-      await Olm.default.init({ locateFile: () => OLM_CDN_URL });
-
-      // Initialize with the WASM buffer
-      await Olm.default.init(wasmBuffer);
+      await Olm.default.init();
       return Olm.default;
-    } catch (err) {
-      console.error('OLM initialization failed:', err);
-      return null;
+    } catch (packageErr) {
+      console.log('Package import failed, trying alternative methods...');
     }
+
+    // Fallback 1: Local public path
+    const localWasmPath = '/olm.wasm';
+    try {
+      const response = await fetch(localWasmPath);
+      if (!response.ok) throw new Error('Local WASM not found');
+      
+      const wasmBinary = await response.arrayBuffer();
+      const Olm = await import('@matrix-org/olm');
+      await Olm.default.init(wasmBinary);
+      return Olm.default;
+    } catch (localErr) {
+      console.log('Local WASM load failed, trying CDN...');
+    }
+
+    // Fallback 2: Self-hosted CDN with proper CORS
+    const cdnUrl = 'https://cdn.jsdelivr.net/npm/@matrix-org/olm@3.2.4/olm.wasm';
+    try {
+      const response = await fetch(cdnUrl);
+      if (!response.ok) throw new Error('CDN WASM not found');
+      
+      const wasmBinary = await response.arrayBuffer();
+      const Olm = await import('@matrix-org/olm');
+      await Olm.default.init(wasmBinary);
+      return Olm.default;
+    } catch (cdnErr) {
+      console.error('All WASM loading methods failed');
+      throw new Error('Could not initialize OLM');
+    }
+  } catch (err) {
+    console.error('OLM initialization failed:', err);
+    return null;
   }
-  return null;
 };
 
 export default function ChatContent() {
@@ -137,11 +149,12 @@ export default function ChatContent() {
   const isPaginatingRef = useRef(false);
   const roomCacheRef = useRef(new Set());
   const abortControllerRef = useRef(null);
+  const retryCountRef = useRef(0);
 
   // Initialize OLM
   useEffect(() => {
     let isMounted = true;
-
+    
     async function initializeOlm() {
       try {
         const Olm = await loadOlm();
@@ -417,7 +430,7 @@ export default function ChatContent() {
       await client.bootstrapCrossSigning({
         authUploadDeviceSigningKeys: async (makeRequest) => makeRequest({})
       });
-
+      
       setLoadingStates(prev => ({ ...prev, encryption: true }));
       return true;
     } catch (err) {
@@ -427,13 +440,37 @@ export default function ChatContent() {
     }
   }
 
-  // Initialize Matrix client
+  // Enhanced Matrix client initialization
   useEffect(() => {
     let unmounted = false;
     let client = null;
     let syncTimeout = null;
-    const MAX_RETRIES = 3;
-    let retryCount = 0;
+    const MAX_RETRIES = 5;
+    const BASE_DELAY = 1000;
+
+    const handleSyncError = (err) => {
+      if (unmounted) return;
+
+      console.error('Sync error:', err);
+      setErrorMsg(`Connection issue: ${err.message}`);
+      setConnectionState('disconnected');
+
+      if (retryCountRef.current >= MAX_RETRIES) {
+        console.error('Max retries reached');
+        setErrorMsg('Failed to sync after multiple attempts. Please refresh the page.');
+        return;
+      }
+
+      const delay = Math.min(BASE_DELAY * Math.pow(2, retryCountRef.current), 30000);
+      retryCountRef.current++;
+      console.log(`Retrying in ${delay}ms (attempt ${retryCountRef.current})`);
+
+      syncTimeout = setTimeout(() => {
+        if (client && !unmounted) {
+          client.startClient().catch(handleSyncError);
+        }
+      }, delay);
+    };
 
     const handleUnknownRoom = async (roomId) => {
       if (!client || roomCacheRef.current.has(roomId)) return;
@@ -478,52 +515,19 @@ export default function ChatContent() {
       }
     };
 
-    // Update your handleSyncError function:
-    const handleSyncError = (err) => {
-      if (unmounted) return;
-
-      console.error('Sync error:', err);
-      setErrorMsg(`Connection issue: ${err.message}`);
-      setConnectionState('disconnected');
-
-      // More robust retry logic
-      const delay = Math.min(1000 * Math.pow(2, retryCount), 30000) + Math.random() * 2000;
-
-      if (retryCount < MAX_RETRIES) {
-        retryCount++;
-        console.log(`Retrying in ${delay}ms (attempt ${retryCount})`);
-
-        syncTimeout = setTimeout(() => {
-          if (client && !unmounted) {
-            client.startClient().catch(handleSyncError);
-          }
-        }, delay);
-      } else {
-        setErrorMsg('Failed to sync after multiple attempts. Please check your connection and refresh.');
-        // Auto-refresh after 30 seconds
-        setTimeout(() => window.location.reload(), 30000);
-      }
-    };
-
     async function initMatrixClient() {
       try {
         setLoadingStates(prev => ({ ...prev, initial: true }));
+        retryCountRef.current = 0;
 
         // Check browser support
         if (typeof indexedDB === 'undefined' || !window.crypto?.subtle) {
           throw new Error('Your browser does not support required encryption features');
         }
 
-        // Wait for OLM to be ready
-        while (!window.Olm && !unmounted) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-
-        if (unmounted) return;
-
         const res = await fetch('/api/get-matrix-token');
         if (!res.ok) throw new Error('Not authenticated');
-        const { access_token, user_id } = await res.json();
+        const { access_token, user_id, device_id } = await res.json();
 
         if (!access_token || !user_id) {
           throw new Error('Missing access token or user ID');
@@ -532,12 +536,11 @@ export default function ChatContent() {
         // Create new AbortController for this session
         abortControllerRef.current = new AbortController();
 
-        // In your initMatrixClient function:
         client = sdk.createClient({
           baseUrl: 'https://matrix.social.sequoiasupport.com',
           accessToken: access_token,
           userId: user_id,
-          deviceId: `web_${Date.now()}`, // Add deviceId
+          deviceId: device_id || `web_${Date.now()}`,
           timelineSupport: true,
           useAuthorizationHeader: true,
           lazyLoadMembers: true,
@@ -559,12 +562,12 @@ export default function ChatContent() {
           localStorage: window.localStorage,
           dbName: 'matrix-js-sdk-store',
         });
-
+        
         client.store = store;
         await store.startup();
 
         // Initialize crypto if available
-        if (client.initCrypto) {
+        if (client.initCrypto && window.Olm) {
           const cryptoSuccess = await initCrypto(client);
           if (!cryptoSuccess) {
             console.warn('Continuing without encryption support');
@@ -578,7 +581,7 @@ export default function ChatContent() {
         client.on('sync', (state, prevState, data) => {
           if (state === 'PREPARED') {
             setConnectionState('connected');
-            retryCount = 0;
+            retryCountRef.current = 0;
             console.log('Sync prepared successfully');
           } else if (state === 'ERROR') {
             setConnectionState('disconnected');
@@ -677,10 +680,27 @@ export default function ChatContent() {
   }, [router]);
 
   if (loadingStates.initial) return <div className="loading">Loading chat...</div>;
-  if (errorMsg) return <div className="error-message">{errorMsg}</div>;
 
   return (
     <div className="main-layout">
+      {/* Error banners */}
+      {errorMsg && (
+        <div className="error-banner">
+          <FontAwesomeIcon icon={faExclamationTriangle} />
+          <span>{errorMsg}</span>
+          <button onClick={() => window.location.reload()}>
+            Reload
+          </button>
+        </div>
+      )}
+
+      {!window.Olm && (
+        <div className="warning-banner">
+          <FontAwesomeIcon icon={faExclamationTriangle} />
+          <span>Encryption unavailable - some features disabled</span>
+        </div>
+      )}
+
       <section className="channel-list">
         <div className="search-bar">
           <input type="text" placeholder="Search DMs..." />
@@ -693,45 +713,21 @@ export default function ChatContent() {
           <FontAwesomeIcon icon={faPlus} /> New DM
         </button>
 
-        <div className="connection-status" style={{
-          backgroundColor: connectionState === 'connected' ? '#4CAF50' :
-            connectionState === 'reconnecting' ? '#FFC107' : '#F44336',
-          padding: '0.5rem',
-          borderRadius: '4px',
-          margin: '0.5rem 0',
-          textAlign: 'center',
-          fontWeight: 'bold',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '0.5rem'
-        }}>
-          {connectionState === 'connected' ? (
-            <>
-              <div className="status-dot connected"></div>
-              <span>Connected</span>
-            </>
-          ) : connectionState === 'reconnecting' ? (
-            <>
-              <div className="status-dot reconnecting"></div>
-              <span>Reconnecting...</span>
-            </>
-          ) : (
-            <>
-              <div className="status-dot disconnected"></div>
-              <span>Disconnected</span>
-            </>
-          )}
-
+        <div className="connection-status">
+          <div className={`status-dot ${connectionState}`}></div>
+          <span>
+            {connectionState === 'connected' ? 'Connected' :
+             connectionState === 'reconnecting' ? 'Reconnecting...' : 'Disconnected'}
+          </span>
           {connectionState !== 'connected' && (
             <button
+              className="retry-button"
               onClick={() => {
                 if (matrixClient) {
                   matrixClient.startClient();
                   setConnectionState('reconnecting');
                 }
               }}
-              className="retry-button"
             >
               Retry
             </button>
@@ -761,7 +757,7 @@ export default function ChatContent() {
         </div>
 
         {roomJoinError && (
-          <div className="error-message" style={{ margin: '0.5rem 0' }}>
+          <div className="error-message">
             {roomJoinError}
           </div>
         )}
@@ -1345,22 +1341,16 @@ export default function ChatContent() {
           align-items: center;
           gap: 0.5rem;
         }
-        
-        @media (max-width: 768px) {
-          .main-layout {
-            flex-direction: column;
-            height: auto;
-          }
-          
-          .channel-list {
-            width: 100%;
-            height: auto;
-            max-height: 300px;
-          }
-          
-          .message-window {
-            height: 60vh;
-          }
+
+        /* New styles for connection status */
+        .connection-status {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.5rem;
+          border-radius: 4px;
+          margin: 0.5rem 0;
+          background: #2a2a2a;
         }
 
         .status-dot {
@@ -1385,14 +1375,8 @@ export default function ChatContent() {
           box-shadow: 0 0 5px #F44336;
         }
 
-        @keyframes pulse {
-          0% { opacity: 1; }
-          50% { opacity: 0.5; }
-          100% { opacity: 1; }
-        }
-
         .retry-button {
-          margin-left: 0.5rem;
+          margin-left: auto;
           background: rgba(255, 255, 255, 0.2);
           border: none;
           color: white;
@@ -1404,6 +1388,76 @@ export default function ChatContent() {
 
         .retry-button:hover {
           background: rgba(255, 255, 255, 0.3);
+        }
+
+        @keyframes pulse {
+          0% { opacity: 1; }
+          50% { opacity: 0.5; }
+          100% { opacity: 1; }
+        }
+
+        /* Error and warning banners */
+        .error-banner {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          background: #d32f2f;
+          color: white;
+          padding: 0.75rem;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
+          z-index: 1001;
+        }
+
+        .error-banner button {
+          margin-left: 1rem;
+          background: rgba(255, 255, 255, 0.2);
+          border: none;
+          color: white;
+          padding: 0.25rem 0.5rem;
+          border-radius: 4px;
+          cursor: pointer;
+        }
+
+        .warning-banner {
+          position: fixed;
+          top: 40px;
+          left: 0;
+          right: 0;
+          background: #ff9800;
+          color: #000;
+          padding: 0.75rem;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
+          z-index: 1000;
+        }
+        
+        @media (max-width: 768px) {
+          .main-layout {
+            flex-direction: column;
+            height: auto;
+          }
+          
+          .channel-list {
+            width: 100%;
+            height: auto;
+            max-height: 300px;
+          }
+          
+          .message-window {
+            height: 60vh;
+          }
+
+          .error-banner,
+          .warning-banner {
+            position: static;
+            margin-bottom: 1rem;
+          }
         }
       `}</style>
     </div>
