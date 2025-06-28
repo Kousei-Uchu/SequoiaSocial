@@ -114,24 +114,27 @@ export default function ChatContent() {
 
   useEffect(() => {
     async function loadOlm() {
-      try {
-        // Dynamically import olm package
-        const Olm = await import('olm');
+      if (typeof window === 'undefined') return;
+      if (window.Olm) return;
 
-        // Initialize Olm WASM
-        await Olm.init();
-        window.Olm = Olm;  // assign globally for matrix-js-sdk
+      // Load olm.js script
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = '/olm/olm.js';
+        script.onload = resolve;
+        script.onerror = reject;
+        document.body.appendChild(script);
+      });
 
-        console.log('Olm initialized');
-      } catch (olmErr) {
-        console.warn('Olm initialization failed:', olmErr);
-      }
+      // Initialize Olm (waits for wasm to load)
+      await window.Olm.init();
+
+      console.log('Olm loaded and initialized');
     }
 
-    if (typeof window !== 'undefined') {
-      loadOlm();
-    }
+    loadOlm();
   }, []);
+
 
   useEffect(() => {
     let unmounted = false;
