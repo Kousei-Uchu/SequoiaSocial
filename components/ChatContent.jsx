@@ -102,35 +102,6 @@ export default function ChatContent() {
   const isPaginatingRef = useRef(false);
   const roomCacheRef = useRef(new Set());
 
-  // Custom fetch function that uses our proxy
-  const proxyFetch = useCallback(async (input, init = {}) => {
-    try {
-      const url = new URL(input);
-      const path = url.pathname.replace('/_matrix/client/v3/', '');
-      const query = url.search ? url.search.slice(1) : '';
-      const fullPath = query ? `${path}?${query}` : path;
-
-      const response = await fetch(`/api/matrix/${fullPath}`, {
-        ...init,
-        headers: {
-          ...init.headers,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Request failed');
-      }
-
-      return response;
-    } catch (err) {
-      console.error('Proxy fetch error:', err);
-      throw err;
-    }
-  }, []);
-
   // Handle unknown rooms
   const handleUnknownRoom = useCallback(async (roomId) => {
     if (!matrixClient || roomCacheRef.current.has(roomId)) return;
@@ -207,7 +178,6 @@ export default function ChatContent() {
           timelineSupport: true,
           cryptoStore: new sdk.IndexedDBCryptoStore(indexedDB, 'matrix-crypto-store'),
           useAuthorizationHeader: true,
-          fetchFn: proxyFetch, // Use our custom fetch function
           lazyLoadMembers: true
         });
 
@@ -328,7 +298,7 @@ export default function ChatContent() {
         client.removeAllListeners();
       }
     };
-  }, [router, proxyFetch, handleNewEvent, handleUnknownRoom]);
+  }, [router, handleNewEvent, handleUnknownRoom]);
 
   // Room settings effect
   useEffect(() => {
