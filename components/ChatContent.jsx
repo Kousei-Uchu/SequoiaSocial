@@ -133,12 +133,6 @@ export default function ChatContent() {
     const MAX_RETRIES = 3;
     let retryCount = 0;
 
-    const detectPlatform = (msgs) => {
-      const last = [...msgs].reverse().find(e => e.getType() === 'm.room.message');
-      const platform = last?.getSender()?.split(':')[1]?.split('.')[0] || 'unknown';
-      setSelectedPlatform(platformMap[platform] ? platform : 'unknown');
-    };
-
     const handleUnknownRoom = async (roomId) => {
       if (!client || roomCacheRef.current.has(roomId)) return;
       roomCacheRef.current.add(roomId);
@@ -180,6 +174,19 @@ export default function ChatContent() {
 
     async function initMatrixClient() {
       try {
+        // Load Olm only once
+        if (typeof window !== 'undefined' && !window.Olm) {
+          await new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = '/olm/olm.js';  // Make sure this path is correct and served!
+            script.onload = resolve;
+            script.onerror = reject;
+            document.body.appendChild(script);
+          });
+          await window.Olm.init();
+          console.log('Olm loaded and initialized');
+        }
+
         setLoadingStates(prev => ({ ...prev, initial: true }));
 
         const res = await fetch('/api/get-matrix-token');
@@ -190,21 +197,10 @@ export default function ChatContent() {
           throw new Error('Missing access token or user ID');
         }
 
+        // IndexedDB crypto store if available
         const cryptoStore = typeof indexedDB !== 'undefined'
           ? new sdk.IndexedDBCryptoStore(indexedDB, 'matrix-crypto-store')
           : null;
-
-        // Wait for Olm to load & initialize before creating client
-        if (typeof window !== 'undefined' && (!window.Olm || !window.Olm.isReady)) {
-          await new Promise(resolve => {
-            const interval = setInterval(() => {
-              if (window.Olm && window.Olm.isReady) {
-                clearInterval(interval);
-                resolve();
-              }
-            }, 100);
-          });
-        }
 
         client = sdk.createClient({
           baseUrl: 'https://matrix.social.sequoiasupport.com',
@@ -214,44 +210,20 @@ export default function ChatContent() {
           cryptoStore,
           useAuthorizationHeader: true,
           lazyLoadMembers: true,
-          olmVersion: window.Olm, // PASS Olm here!
         });
 
-        // Initialize crypto only after Olm is ready
         try {
-          if (cryptoStore && client.initCrypto) {
-            await client.initCrypto();
-            await client.downloadKeys([user_id], true);
-            client.setGlobalBlacklistUnverifiedDevices(false);
-            console.log('Matrix crypto initialized');
-            setLoadingStates(prev => ({ ...prev, encryption: true }));
-          } else {
-            console.warn('Crypto not supported in this environment');
-            setLoadingStates(prev => ({ ...prev, encryption: false }));
-          }
+          await client.initCrypto();
+          await client.downloadKeys([user_id], true);
+          client.setGlobalBlacklistUnverifiedDevices(false);
+          console.log('Matrix crypto initialized');
+          setLoadingStates(prev => ({ ...prev, encryption: true }));
         } catch (cryptoErr) {
-          console.warn('Crypto initialization failed', cryptoErr);
+          console.warn('Crypto initialization failed:', cryptoErr);
           setLoadingStates(prev => ({ ...prev, encryption: false }));
         }
 
-        // Sync error handler with backoff
-        const handleSyncError = (err) => {
-          if (unmounted) return;
-          console.error('Sync error:', err);
-          setErrorMsg(`Sync error: ${err.message}`);
-
-          if (retryCount < MAX_RETRIES) {
-            retryCount++;
-            const delay = Math.min(5000 * 2 ** retryCount, 30000);
-            console.log(`Retrying sync in ${delay / 1000}s (attempt ${retryCount}/${MAX_RETRIES})`);
-            syncTimeout = setTimeout(() => {
-              if (client && !unmounted) client.startClient();
-            }, delay);
-          } else {
-            setErrorMsg('Failed to sync after multiple attempts. Please refresh.');
-          }
-        };
-
+        // Setup event handlers
         client.on('sync', (state) => {
           if (state === 'PREPARED') {
             retryCount = 0;
@@ -259,18 +231,40 @@ export default function ChatContent() {
           }
         });
 
+        const handleSyncError = (err) => {
+          if (unmounted) return;
+          console.error('Sync error:', err);
+          setErrorMsg(`Sync error: ${err.message}`);
+
+          if (retryCount < MAX_RETRIES) {
+            retryCount++;
+            const delay = Math.min(5000 * Math.pow(2, retryCount), 30000);
+            console.log(`Retrying sync in ${delay / 1000} seconds (attempt ${retryCount}/${MAX_RETRIES})`);
+            syncTimeout = setTimeout(() => {
+              if (client && !unmounted) {
+                client.startClient();
+              }
+            }, delay);
+          } else {
+            setErrorMsg('Failed to sync after multiple attempts. Please refresh.');
+          }
+        };
+
         client.on('sync.error', handleSyncError);
+
         client.on('Session.logged_out', () => {
           if (!unmounted) setErrorMsg('Session logged out');
         });
 
         client.on('Room.timeline', handleNewEvent);
+
         client.on('RoomState.events', (event, state) => {
           if (!client.getRoom(state.roomId)) {
             handleUnknownRoom(state.roomId);
           }
         });
 
+        // Only start the client after crypto init attempt
         client.startClient();
 
         await new Promise((resolve) => {
@@ -308,6 +302,7 @@ export default function ChatContent() {
         }
 
         setLoadingStates(prev => ({ ...prev, initial: false }));
+
       } catch (err) {
         console.error('Matrix client init failed:', err);
         if (!unmounted) {
@@ -330,6 +325,7 @@ export default function ChatContent() {
       }
     };
   }, []);
+
 
   // Update room settings when activeRoom or client changes
   useEffect(() => {
