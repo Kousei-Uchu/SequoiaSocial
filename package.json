@@ -22,7 +22,7 @@
     "matrix-js-sdk": "^37.9.0",
     "marked": "^15.0.12",
     "dompurify": "^3.2.6",
-    "olm": "^3.2.12"
+    "@matrix-org/olm": "^3.2.12"
   },
   "devDependencies": {
     "eslint": "^8.56.0",
