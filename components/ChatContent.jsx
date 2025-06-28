@@ -155,143 +155,189 @@ export default function ChatContent() {
   }, [activeRoom, messages, handleUnknownRoom]);
 
   // Initialize Matrix client
-  useEffect(() => {
-    let unmounted = false;
-    let client = null;
+  // Updated Matrix client initialization with enhanced error handling
+useEffect(() => {
+  let unmounted = false;
+  let client = null;
+  let syncTimeout = null;
+  let retryCount = 0;
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY = 5000; // 5 seconds
 
-    async function initMatrixClient() {
+  async function initMatrixClient() {
+    try {
+      setLoadingStates(prev => ({ ...prev, initial: true }));
+      
+      // Fetch access token
+      const res = await fetch('/api/get-matrix-token');
+      if (!res.ok) throw new Error('Not authenticated');
+      const { access_token, user_id } = await res.json();
+
+      if (!access_token || !user_id) {
+        throw new Error('Missing access token or user ID');
+      }
+
+      const homeserver = 'https://matrix.social.sequoiasupport.com';
+
+      // Configure client with retry logic
+      client = sdk.createClient({
+        baseUrl: homeserver,
+        accessToken: access_token,
+        userId: user_id,
+        timelineSupport: true,
+        cryptoStore: new sdk.IndexedDBCryptoStore(indexedDB, 'matrix-crypto-store'),
+        useAuthorizationHeader: true,
+        unstableClientRelationAggregation: true,
+        // Add fetch timeout
+        fetchFn: (input, init) => {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
+          return fetch(input, { 
+            ...init, 
+            signal: controller.signal 
+          }).finally(() => clearTimeout(timeout));
+        }
+      });
+
+      // Initialize encryption
       try {
-        setLoadingStates(prev => ({ ...prev, initial: true }));
-        
-        // Fetch access token and user id from your backend API
-        const res = await fetch('/api/get-matrix-token');
-        if (!res.ok) throw new Error('Not authenticated');
-
-        const { access_token, user_id } = await res.json();
-
-        if (!access_token || !user_id) {
-          throw new Error('Missing access token or user ID');
+        if (client.initCrypto) {
+          await client.initCrypto();
+        } else if (client.crypto?.init) {
+          await client.crypto.init();
         }
+        setLoadingStates(prev => ({ ...prev, encryption: true }));
+      } catch (cryptoErr) {
+        console.warn("Crypto initialization failed", cryptoErr);
+        setLoadingStates(prev => ({ ...prev, encryption: false }));
+      }
 
-        const homeserver = 'https://matrix.social.sequoiasupport.com';
-
-        // Enable debug logging
-        localStorage.debug = 'matrix*';
-
-        // Create Matrix client instance
-        client = sdk.createClient({
-          baseUrl: homeserver,
-          accessToken: access_token,
-          userId: user_id,
-          timelineSupport: true,
-          cryptoStore: new sdk.IndexedDBCryptoStore(indexedDB, 'matrix-js-sdk-crypto-store'),
-          useAuthorizationHeader: true,
-          unstableClientRelationAggregation: true,
-        });
-
-        // Initialize end-to-end encryption if available
-        try {
-          if (client.initCrypto) {
-            await client.initCrypto();
-          } else if (client.crypto?.init) {
-            await client.crypto.init();
-          }
-          setLoadingStates(prev => ({ ...prev, encryption: true }));
-        } catch (cryptoErr) {
-          console.warn("Crypto initialization failed", cryptoErr);
-          setLoadingStates(prev => ({ ...prev, encryption: false }));
-        }
-
-        // Add global room state handler
-        client.on('RoomState.events', (event, state) => {
-          if (!client.getRoom(state.roomId)) {
-            console.warn(`Received state event for unknown room: ${state.roomId}`);
-            handleUnknownRoom(state.roomId);
-          }
-        });
-
-        // Start syncing
-        client.startClient();
-
-        // Wait until sync is ready
-        await new Promise((resolve) => {
-          client.once('sync', (state) => {
-            if (state === 'PREPARED') {
-              resolve(null);
-            }
-          });
-        });
-
+      // Enhanced error handling for sync
+      const handleSyncError = (err) => {
         if (unmounted) return;
-
-        // Load direct messages and contacts
-        const directMap = client.getAccountData('m.direct')?.getContent() || {};
-        const dmRoomIds = new Set(Object.values(directMap).flat());
-        const dmRooms = client.getRooms().filter(r => dmRoomIds.has(r.roomId));
-
-        // Load contact links
-        const contactLinks = client.getAccountData('com.sequoiasocial.contact_linking')?.getContent()?.contacts || {};
-        const filteredContacts = Object.entries(contactLinks).map(([contactId, data]) => {
-          const roomObjects = {};
-          for (const [platform, roomId] of Object.entries(data.linkedRooms || {})) {
-            const room = client.getRoom(roomId);
-            const members = room?.getJoinedMembers() || [];
-            if (room && members.length === 2 && members.some(m => m.userId === contactId)) {
-              roomObjects[platform] = room;
+        
+        console.error('Sync error:', err);
+        setErrorMsg(`Sync error: ${err.message}`);
+        
+        if (retryCount < MAX_RETRIES) {
+          retryCount++;
+          console.log(`Retrying sync in ${RETRY_DELAY/1000} seconds (attempt ${retryCount}/${MAX_RETRIES})`);
+          syncTimeout = setTimeout(() => {
+            if (client && !unmounted) {
+              client.startClient();
             }
-          }
-          return { contactId, linkedRooms: data.linkedRooms, roomObjects };
-        });
-
-        // Initialize room cache
-        dmRooms.forEach(room => roomCacheRef.current.add(room.roomId));
-
-        setMatrixClient(client);
-        setRooms(dmRooms);
-        setContacts(filteredContacts);
-
-        if (dmRooms.length > 0) {
-          setActiveRoom(dmRooms[0]);
-          setMessages(dmRooms[0].timeline || []);
-          detectPlatform(dmRooms[0].timeline || []);
+          }, RETRY_DELAY);
+        } else {
+          setErrorMsg('Failed to sync after multiple attempts. Please refresh.');
         }
+      };
 
-        setLoadingStates(prev => ({ ...prev, initial: false }));
-
-        // Add event listener for new messages
-        client.on('Room.timeline', handleNewEvent);
-
-        // Add room listener for new rooms
-        client.on('Room', (room) => {
-          if (!roomCacheRef.current.has(room.roomId)) {
-            roomCacheRef.current.add(room.roomId);
+      // Handle unknown rooms more robustly
+      const handleUnknownRoom = async (roomId) => {
+        try {
+          const room = client.getRoom(roomId) || await client.joinRoom(roomId);
+          if (room && !rooms.some(r => r.roomId === roomId)) {
             setRooms(prev => [...prev, room]);
           }
-        });
-
-      } catch (err) {
-        console.error('Matrix client init failed:', err);
-        if (!unmounted) {
-          setErrorMsg(`Failed to connect to Matrix: ${err.message}`);
-          setLoadingStates(prev => ({ ...prev, initial: false }));
+        } catch (err) {
+          console.error(`Failed to handle unknown room ${roomId}:`, err);
         }
+      };
+
+      // Add event listeners
+      client.on('sync', (state, prevState, data) => {
+        if (state === 'PREPARED') {
+          retryCount = 0; // Reset retry counter on successful sync
+          console.log('Sync prepared successfully');
+        }
+      });
+
+      client.on('RoomState.events', (event, state) => {
+        if (!client.getRoom(state.roomId)) {
+          console.warn(`Received state event for unknown room: ${state.roomId}`);
+          handleUnknownRoom(state.roomId);
+        }
+      });
+
+      client.on('sync.error', handleSyncError);
+      client.on('Session.logged_out', () => {
+        if (!unmounted) setErrorMsg('Session logged out');
+      });
+
+      // Start client with backoff
+      const startClientWithBackoff = async () => {
+        try {
+          await client.startClient({
+            initialSyncLimit: 10, // Reduce initial sync load
+          });
+        } catch (err) {
+          handleSyncError(err);
+        }
+      };
+
+      await startClientWithBackoff();
+
+      // Load rooms after sync
+      client.once('sync', async (state) => {
+        if (state !== 'PREPARED' || unmounted) return;
+        
+        try {
+          const directMap = client.getAccountData('m.direct')?.getContent() || {};
+          const dmRoomIds = new Set(Object.values(directMap).flat());
+          const dmRooms = client.getRooms().filter(r => dmRoomIds.has(r.roomId));
+          
+          // Load contact links
+          const contactLinks = client.getAccountData('com.sequoiasocial.contact_linking')?.getContent()?.contacts || {};
+          const filteredContacts = Object.entries(contactLinks).map(([contactId, data]) => {
+            const roomObjects = {};
+            for (const [platform, roomId] of Object.entries(data.linkedRooms || {})) {
+              const room = client.getRoom(roomId);
+              const members = room?.getJoinedMembers() || [];
+              if (room && members.length === 2 && members.some(m => m.userId === contactId)) {
+                roomObjects[platform] = room;
+              }
+            }
+            return { contactId, linkedRooms: data.linkedRooms, roomObjects };
+          });
+
+          setMatrixClient(client);
+          setRooms(dmRooms);
+          setContacts(filteredContacts);
+          
+          if (dmRooms.length > 0) {
+            setActiveRoom(dmRooms[0]);
+            setMessages(dmRooms[0].timeline || []);
+          }
+
+          setLoadingStates(prev => ({ ...prev, initial: false }));
+        } catch (err) {
+          console.error('Failed to initialize rooms:', err);
+          if (!unmounted) setErrorMsg('Failed to load rooms');
+        }
+      });
+
+    } catch (err) {
+      console.error('Matrix client init failed:', err);
+      if (!unmounted) {
+        setErrorMsg(`Failed to connect: ${err.message}`);
+        setLoadingStates(prev => ({ ...prev, initial: false }));
       }
     }
+  }
 
-    if (typeof window !== 'undefined') {
-      initMatrixClient();
+  if (typeof window !== 'undefined') {
+    initMatrixClient();
+  }
+
+  return () => {
+    unmounted = true;
+    if (syncTimeout) clearTimeout(syncTimeout);
+    if (client) {
+      client.removeAllListeners();
+      client.stopClient();
     }
-
-    return () => {
-      unmounted = true;
-      if (client) {
-        client.removeListener('Room.timeline', handleNewEvent);
-        client.removeListener('RoomState.events');
-        client.removeListener('Room');
-        client.stopClient();
-      }
-    };
-  }, [router, handleNewEvent, handleUnknownRoom]);
+  };
+}, [router]);
 
   // Room settings effect
   useEffect(() => {
