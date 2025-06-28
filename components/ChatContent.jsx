@@ -194,7 +194,13 @@ useEffect(() => {
           const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
           return fetch(input, { 
             ...init, 
-            signal: controller.signal 
+            signal: controller.signal, 
+            mode: 'cors', // Enable CORS mode
+            credentials: 'include', // Include credentials if needed
+            headers: {
+              ...init?.headers,
+              'Access-Control-Allow-Origin': '*',
+            }
           }).finally(() => clearTimeout(timeout));
         }
       });
