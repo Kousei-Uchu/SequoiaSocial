@@ -201,7 +201,7 @@ export default function ChatContent() {
         }
 
         client = sdk.createClient({
-          baseUrl: 'social.sequoiasupport.com/api/matrix', // Use proxy endpoint
+          baseUrl: 'https://matrix.social.sequoiasupport.com', // Use proxy endpoint
           accessToken: access_token,
           userId: user_id,
           timelineSupport: true,
