@@ -188,6 +188,8 @@ export default function ChatContent() {
           if (cryptoStore) {
             console.log('Initializing crypto...');
             await client.initCrypto();
+            await client.downloadKeys([user_id], true); // 🔑 Required to send encrypted messages
+            client.setGlobalBlacklistUnverifiedDevices(false); // Optional: avoid strict mode
             console.log('Crypto initialized.');
             setLoadingStates(prev => ({ ...prev, encryption: true }));
           } else {
@@ -198,6 +200,7 @@ export default function ChatContent() {
           console.warn("Crypto initialization failed", cryptoErr);
           setLoadingStates(prev => ({ ...prev, encryption: false }));
         }
+
 
         const handleSyncError = (err) => {
           if (unmounted) return;
