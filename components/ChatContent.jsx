@@ -590,6 +590,20 @@ export default function ChatContent() {
       }
     }, [matrixClient]);
 
+    useEffect(() => {
+      async function verifyWASM() {
+        try {
+          const { default: wasm } = await import('@matrix-org/matrix-sdk-crypto-wasm');
+          console.log('WASM loaded successfully');
+          return true;
+        } catch (e) {
+          console.error('WASM load failed:', e);
+          return false;
+        }
+      }
+      verifyWASM();
+    }, []);
+
     // Network status listener
     const handleOnline = () => {
       if (connectionState === 'disconnected' && !loadingStates.initial) {
