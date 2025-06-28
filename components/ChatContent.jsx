@@ -169,27 +169,31 @@ export default function ChatContent() {
           throw new Error('Missing access token or user ID');
         }
 
+        // Only initialize cryptoStore if indexedDB is available
+        const cryptoStore = typeof indexedDB !== 'undefined'
+          ? new sdk.IndexedDBCryptoStore(indexedDB, 'matrix-crypto-store')
+          : null;
+
         client = sdk.createClient({
           baseUrl: 'https://matrix.social.sequoiasupport.com', // Your homeserver URL
           accessToken: access_token,
           userId: user_id,
           timelineSupport: true,
-          cryptoStore: new sdk.IndexedDBCryptoStore(indexedDB, 'matrix-crypto-store'),
+          cryptoStore,
           useAuthorizationHeader: true,
-          lazyLoadMembers: true
+          lazyLoadMembers: true,
         });
 
         try {
-          if (client.initCrypto) {
+          if (cryptoStore) {
             console.log('Initializing crypto...');
             await client.initCrypto();
             console.log('Crypto initialized.');
-          } else if (client.crypto?.init) {
-            console.log('Initializing crypto (old method)...');
-            await client.crypto.init();
-            console.log('Crypto initialized (old method).');
+            setLoadingStates(prev => ({ ...prev, encryption: true }));
+          } else {
+            console.warn('indexedDB not available; skipping crypto initialization.');
+            setLoadingStates(prev => ({ ...prev, encryption: false }));
           }
-          setLoadingStates(prev => ({ ...prev, encryption: true }));
         } catch (cryptoErr) {
           console.warn("Crypto initialization failed", cryptoErr);
           setLoadingStates(prev => ({ ...prev, encryption: false }));
@@ -278,6 +282,7 @@ export default function ChatContent() {
         }
       }
     }
+
 
     if (typeof window !== 'undefined') {
       initMatrixClient();
