@@ -69,10 +69,29 @@ const guestAccessOptions = [
 const loadOlm = async () => {
   if (typeof window !== 'undefined') {
     try {
-      // Try both package names for compatibility
-      const Olm = await import('@matrix-org/olm').catch(() => import('olm'));
-      await Olm.default.init();
-      window.Olm = Olm.default; // Make available globally
+      // Try loading from CDN as fallback
+      const OLM_CDN_URL = 'https://unpkg.com/@matrix-org/olm@3.2.4/olm.wasm';
+
+      // First try package import
+      try {
+        const Olm = await import('@matrix-org/olm');
+        await Olm.default.init();
+        return Olm.default;
+      } catch (err) {
+        console.log('Package import failed, trying CDN fallback...');
+      }
+
+      // CDN fallback
+      const wasmResponse = await fetch(OLM_CDN_URL);
+      if (!wasmResponse.ok) throw new Error('Failed to fetch WASM');
+
+      const wasmBuffer = await wasmResponse.arrayBuffer();
+      const Olm = await import('@matrix-org/olm');
+      Olm.default.initOlm = () => { };
+      await Olm.default.init({ locateFile: () => OLM_CDN_URL });
+
+      // Initialize with the WASM buffer
+      await Olm.default.init(wasmBuffer);
       return Olm.default;
     } catch (err) {
       console.error('OLM initialization failed:', err);
@@ -122,7 +141,7 @@ export default function ChatContent() {
   // Initialize OLM
   useEffect(() => {
     let isMounted = true;
-    
+
     async function initializeOlm() {
       try {
         const Olm = await loadOlm();
@@ -398,7 +417,7 @@ export default function ChatContent() {
       await client.bootstrapCrossSigning({
         authUploadDeviceSigningKeys: async (makeRequest) => makeRequest({})
       });
-      
+
       setLoadingStates(prev => ({ ...prev, encryption: true }));
       return true;
     } catch (err) {
@@ -459,6 +478,7 @@ export default function ChatContent() {
       }
     };
 
+    // Update your handleSyncError function:
     const handleSyncError = (err) => {
       if (unmounted) return;
 
@@ -466,19 +486,22 @@ export default function ChatContent() {
       setErrorMsg(`Connection issue: ${err.message}`);
       setConnectionState('disconnected');
 
-      // Exponential backoff for retries
-      const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+      // More robust retry logic
+      const delay = Math.min(1000 * Math.pow(2, retryCount), 30000) + Math.random() * 2000;
 
       if (retryCount < MAX_RETRIES) {
         retryCount++;
+        console.log(`Retrying in ${delay}ms (attempt ${retryCount})`);
+
         syncTimeout = setTimeout(() => {
           if (client && !unmounted) {
-            console.log(`Retrying sync (attempt ${retryCount})...`);
-            client.startClient();
+            client.startClient().catch(handleSyncError);
           }
         }, delay);
       } else {
-        setErrorMsg('Failed to sync after multiple attempts. Please refresh the page.');
+        setErrorMsg('Failed to sync after multiple attempts. Please check your connection and refresh.');
+        // Auto-refresh after 30 seconds
+        setTimeout(() => window.location.reload(), 30000);
       }
     };
 
@@ -509,10 +532,12 @@ export default function ChatContent() {
         // Create new AbortController for this session
         abortControllerRef.current = new AbortController();
 
+        // In your initMatrixClient function:
         client = sdk.createClient({
           baseUrl: 'https://matrix.social.sequoiasupport.com',
           accessToken: access_token,
           userId: user_id,
+          deviceId: `web_${Date.now()}`, // Add deviceId
           timelineSupport: true,
           useAuthorizationHeader: true,
           lazyLoadMembers: true,
@@ -534,7 +559,7 @@ export default function ChatContent() {
           localStorage: window.localStorage,
           dbName: 'matrix-js-sdk-store',
         });
-        
+
         client.store = store;
         await store.startup();
 
@@ -675,22 +700,38 @@ export default function ChatContent() {
           borderRadius: '4px',
           margin: '0.5rem 0',
           textAlign: 'center',
-          fontWeight: 'bold'
+          fontWeight: 'bold',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '0.5rem'
         }}>
-          {connectionState === 'connected' ? 'Connected' :
-            connectionState === 'reconnecting' ? 'Reconnecting...' : 'Disconnected'}
-          {connectionState === 'disconnected' && (
+          {connectionState === 'connected' ? (
+            <>
+              <div className="status-dot connected"></div>
+              <span>Connected</span>
+            </>
+          ) : connectionState === 'reconnecting' ? (
+            <>
+              <div className="status-dot reconnecting"></div>
+              <span>Reconnecting...</span>
+            </>
+          ) : (
+            <>
+              <div className="status-dot disconnected"></div>
+              <span>Disconnected</span>
+            </>
+          )}
+
+          {connectionState !== 'connected' && (
             <button
-              onClick={() => initMatrixClient()}
-              style={{
-                marginLeft: '0.5rem',
-                background: 'rgba(255,255,255,0.2)',
-                border: 'none',
-                color: 'white',
-                padding: '0.25rem 0.5rem',
-                borderRadius: '4px',
-                cursor: 'pointer'
+              onClick={() => {
+                if (matrixClient) {
+                  matrixClient.startClient();
+                  setConnectionState('reconnecting');
+                }
               }}
+              className="retry-button"
             >
               Retry
             </button>
@@ -1320,6 +1361,49 @@ export default function ChatContent() {
           .message-window {
             height: 60vh;
           }
+        }
+
+        .status-dot {
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+        }
+
+        .status-dot.connected {
+          background: #4CAF50;
+          box-shadow: 0 0 5px #4CAF50;
+        }
+
+        .status-dot.reconnecting {
+          background: #FFC107;
+          box-shadow: 0 0 5px #FFC107;
+          animation: pulse 1.5s infinite;
+        }
+
+        .status-dot.disconnected {
+          background: #F44336;
+          box-shadow: 0 0 5px #F44336;
+        }
+
+        @keyframes pulse {
+          0% { opacity: 1; }
+          50% { opacity: 0.5; }
+          100% { opacity: 1; }
+        }
+
+        .retry-button {
+          margin-left: 0.5rem;
+          background: rgba(255, 255, 255, 0.2);
+          border: none;
+          color: white;
+          padding: 0.25rem 0.5rem;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 0.8rem;
+        }
+
+        .retry-button:hover {
+          background: rgba(255, 255, 255, 0.3);
         }
       `}</style>
     </div>
