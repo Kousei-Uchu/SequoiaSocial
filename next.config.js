@@ -1,26 +1,23 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  experimental: {
-    serverComponentsExternalPackages: ['@matrix-org/olm'],
-    webpackBuildWorker: true
-  },
-  webpack: (config, { isServer }) => {
-    if (!isServer) {
-      config.resolve.fallback = {
-        fs: false,
-        path: false,
-        crypto: false
-      }
-    }
+// next.config.js
+module.exports = {
+  webpack: (config) => {
+    // Add WASM support
+    config.experiments = { 
+      ...config.experiments, 
+      asyncWebAssembly: true 
+    };
     
-    // Add this alias
-    config.resolve.alias = {
-      ...config.resolve.alias,
-      'olm': '@matrix-org/olm'
-    }
-    
-    return config
-  }
-}
+    // Add file-loader for WASM files
+    config.module.rules.push({
+      test: /\.wasm$/,
+      type: 'javascript/auto',
+      loader: 'file-loader',
+      options: {
+        name: 'static/wasm/[name].[hash:8].[ext]',
+        publicPath: '/_next/',
+      },
+    });
 
-module.exports = nextConfig
+    return config;
+  },
+};

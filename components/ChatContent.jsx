@@ -70,40 +70,44 @@ const loadOlm = async () => {
   if (typeof window === 'undefined') return null;
 
   try {
-    // Try to load from package first
+    // Try direct import first
     try {
       const Olm = await import('@matrix-org/olm');
       await Olm.default.init();
       return Olm.default;
-    } catch (packageErr) {
-      console.log('Package import failed, trying alternative methods...');
+    } catch (err) {
+      console.log('Direct OLM import failed, trying alternatives...');
     }
 
-    // Fallback 1: Local API endpoint
+    // Fallback 1: Preload WASM from public directory
     try {
-      const response = await fetch('/api/olm-wasm');
-      if (!response.ok) throw new Error('Local WASM API not found');
+      const wasmResponse = await fetch('/olm.wasm');
+      if (!wasmResponse.ok) throw new Error('Failed to fetch WASM');
       
-      const wasmBinary = await response.arrayBuffer();
+      const wasmBinary = await wasmResponse.arrayBuffer();
       const Olm = await import('@matrix-org/olm');
       await Olm.default.init(wasmBinary);
       return Olm.default;
-    } catch (localErr) {
-      console.log('Local WASM API load failed, trying CDN...');
+    } catch (err) {
+      console.log('Public directory WASM load failed, trying CDN...');
     }
 
-    // Fallback 2: Self-hosted CDN with proper CORS
-    const cdnUrl = 'https://cdn.jsdelivr.net/npm/@matrix-org/olm@3.2.4/olm.wasm';
+    // Fallback 2: CDN with error handling
     try {
-      const response = await fetch(cdnUrl);
-      if (!response.ok) throw new Error('CDN WASM not found');
+      const cdnUrl = 'https://cdn.jsdelivr.net/npm/@matrix-org/olm@3.2.4/olm.wasm';
+      const wasmResponse = await fetch(cdnUrl, {
+        mode: 'cors',
+        cache: 'force-cache'
+      });
       
-      const wasmBinary = await response.arrayBuffer();
+      if (!wasmResponse.ok) throw new Error('CDN fetch failed');
+      
+      const wasmBinary = await wasmResponse.arrayBuffer();
       const Olm = await import('@matrix-org/olm');
       await Olm.default.init(wasmBinary);
       return Olm.default;
-    } catch (cdnErr) {
-      console.error('All WASM loading methods failed');
+    } catch (err) {
+      console.error('All WASM loading methods failed:', err);
       throw new Error('Could not initialize OLM');
     }
   } catch (err) {
@@ -158,6 +162,7 @@ export default function ChatContent() {
       try {
         const Olm = await loadOlm();
         if (Olm && isMounted) {
+          window.Olm = Olm; // Make available globally
           setLoadingStates(prev => ({ ...prev, olmReady: true }));
           console.log('OLM initialized successfully');
         }
@@ -567,12 +572,19 @@ export default function ChatContent() {
 
         // Initialize crypto if available
         if (client.initCrypto && window.Olm) {
-          const cryptoSuccess = await initCrypto(client);
-          if (!cryptoSuccess) {
-            console.warn('Continuing without encryption support');
+          try {
+            await client.initCrypto();
+            await client.bootstrapCrossSigning({
+              authUploadDeviceSigningKeys: async (makeRequest) => makeRequest({})
+            });
+            setLoadingStates(prev => ({ ...prev, encryption: true }));
+            console.log('Crypto initialized successfully');
+          } catch (cryptoErr) {
+            console.error('Crypto init failed:', cryptoErr);
+            setLoadingStates(prev => ({ ...prev, encryption: false }));
           }
         } else {
-          console.warn('Client built without crypto support');
+          console.warn('Client built without crypto support or OLM not available');
           setLoadingStates(prev => ({ ...prev, encryption: false }));
         }
 
@@ -680,6 +692,29 @@ export default function ChatContent() {
 
   if (loadingStates.initial) return <div className="loading">Loading chat...</div>;
 
+  const CryptoStatus = () => {
+    if (!loadingStates.olmReady) {
+      return (
+        <div className="crypto-status-loading">
+          <FontAwesomeIcon icon={faQuestionCircle} />
+          Initializing encryption...
+        </div>
+      );
+    }
+
+    return matrixClient?.isCryptoEnabled?.() ? (
+      <div className="crypto-status-good">
+        <FontAwesomeIcon icon={faLock} />
+        End-to-end encryption enabled
+      </div>
+    ) : (
+      <div className="crypto-status-bad">
+        <FontAwesomeIcon icon={faUnlock} />
+        Encryption not supported
+      </div>
+    );
+  };
+
   return (
     <div className="main-layout">
       {/* Error banners */}
@@ -735,22 +770,15 @@ export default function ChatContent() {
 
         <div className="crypto-panel">
           <h4>Encryption Status</h4>
-          {loadingStates.olmReady ? (
-            matrixClient?.isCryptoEnabled?.() ? (
-              <div className="crypto-status-good">
-                <FontAwesomeIcon icon={faLock} />
-                End-to-end encryption enabled
-              </div>
-            ) : (
-              <div className="crypto-status-bad">
-                <FontAwesomeIcon icon={faUnlock} />
-                Encryption not supported
-              </div>
-            )
-          ) : (
-            <div className="crypto-status-loading">
-              <FontAwesomeIcon icon={faQuestionCircle} />
-              Initializing encryption...
+          <CryptoStatus />
+          {!window.Olm && (
+            <div className="crypto-help">
+              <p>To enable encryption:</p>
+              <ol>
+                <li>Ensure your browser supports WebAssembly</li>
+                <li>Check your network connection</li>
+                <li>Refresh the page to retry</li>
+              </ol>
             </div>
           )}
         </div>
@@ -1339,6 +1367,21 @@ export default function ChatContent() {
           display: flex;
           align-items: center;
           gap: 0.5rem;
+        }
+
+        .crypto-help {
+          margin-top: 0.5rem;
+          font-size: 0.8rem;
+          color: #aaa;
+        }
+
+        .crypto-help ol {
+          padding-left: 1rem;
+          margin-top: 0.5rem;
+        }
+
+        .crypto-help li {
+          margin-bottom: 0.25rem;
         }
 
         /* New styles for connection status */
