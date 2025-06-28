@@ -181,9 +181,13 @@ export default function ChatContent() {
 
         try {
           if (client.initCrypto) {
+            console.log('Initializing crypto...');
             await client.initCrypto();
+            console.log('Crypto initialized.');
           } else if (client.crypto?.init) {
+            console.log('Initializing crypto (old method)...');
             await client.crypto.init();
+            console.log('Crypto initialized (old method).');
           }
           setLoadingStates(prev => ({ ...prev, encryption: true }));
         } catch (cryptoErr) {
