@@ -192,7 +192,7 @@ export default function ChatContent() {
       try {
         setLoadingStates(prev => ({ ...prev, initial: true }));
         
-        const res = await fetch('social.sequoiasupport.com/api/get-matrix-token');
+        const res = await fetch('/api/get-matrix-token');
         if (!res.ok) throw new Error('Not authenticated');
         const { access_token, user_id } = await res.json();
 
