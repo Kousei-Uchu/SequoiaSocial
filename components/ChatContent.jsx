@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import * as sdk from 'matrix-js-sdk';
+import * as matrixCrypto from '@matrix-org/matrix-sdk-crypto-js';
 import { useRouter } from 'next/navigation';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -79,6 +80,7 @@ export default function ChatContent() {
     initial: true,
     messages: false,
     encryption: false,
+    cryptoInit: false,
   });
   const [errorMsg, setErrorMsg] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -97,320 +99,6 @@ export default function ChatContent() {
   const messagesContainerRef = useRef(null);
   const isPaginatingRef = useRef(false);
   const roomCacheRef = useRef(new Set());
-
-  // Enhanced Olm loading with CDN fallback
-  // Updated Olm loading and initialization code
-  useEffect(() => {
-    async function loadOlm() {
-      if (typeof window === 'undefined') return;
-
-      // Skip if already loaded
-      if (window.Olm) {
-        console.log('Olm already loaded');
-        return;
-      }
-
-      console.log('Attempting to load Olm...');
-
-      try {
-        // First try loading from local path
-        const script = document.createElement('script');
-        script.src = '/olm/olm.js';
-
-        script.onload = async () => {
-          console.log('Olm script loaded, initializing...');
-          try {
-            // Initialize Olm
-            await new Promise((resolve, reject) => {
-              window.Olm.init().then(() => {
-                console.log('Olm initialized successfully');
-                resolve();
-              }).catch(err => {
-                console.error('Olm initialization failed:', err);
-                reject(err);
-              });
-            });
-          } catch (initErr) {
-            console.error('Olm init failed, trying CDN fallback...', initErr);
-            // Fallback to CDN if local initialization fails
-            await loadOlmFromCDN();
-          }
-        };
-
-        script.onerror = async () => {
-          console.warn('Local Olm failed to load, trying CDN...');
-          await loadOlmFromCDN();
-        };
-
-        document.body.appendChild(script);
-      } catch (err) {
-        console.error('Olm loading error:', err);
-        setErrorMsg('Failed to load encryption library');
-      }
-    }
-
-    async function loadOlmFromCDN() {
-      try {
-        const cdnScript = document.createElement('script');
-        cdnScript.src = 'https://unpkg.com/@matrix-org/olm@3.2.4/olm.js';
-
-        await new Promise((resolve, reject) => {
-          cdnScript.onload = async () => {
-            console.log('CDN Olm loaded, initializing...');
-            try {
-              await window.Olm.init();
-              console.log('CDN Olm initialized successfully');
-              resolve();
-            } catch (err) {
-              console.error('CDN Olm initialization failed:', err);
-              reject(err);
-            }
-          };
-
-          cdnScript.onerror = () => {
-            console.error('Failed to load Olm from CDN');
-            reject(new Error('Failed to load Olm from CDN'));
-          };
-
-          document.body.appendChild(cdnScript);
-        });
-      } catch (err) {
-        console.error('CDN Olm loading failed:', err);
-        throw err;
-      }
-    }
-
-    loadOlm().catch(err => {
-      console.error('Olm loading failed:', err);
-      setErrorMsg('Encryption setup failed. Please refresh.');
-    });
-  }, []);
-
-  // Main Matrix client setup with proper crypto handling
-  useEffect(() => {
-    let unmounted = false;
-    let client = null;
-    let syncTimeout = null;
-    const MAX_RETRIES = 3;
-    let retryCount = 0;
-
-    const handleUnknownRoom = async (roomId) => {
-      if (!client || roomCacheRef.current.has(roomId)) return;
-      roomCacheRef.current.add(roomId);
-      console.warn(`Attempting to recover unknown room: ${roomId}`);
-      try {
-        let room = client.getRoom(roomId);
-        if (!room) {
-          console.log(`Joining room ${roomId}`);
-          room = await client.joinRoom(roomId);
-        }
-        if (room && !rooms.some(r => r.roomId === roomId)) {
-          console.log(`Adding room ${roomId} to state`);
-          setRooms(prev => [...prev, room]);
-          if (!activeRoom) {
-            setActiveRoom(room);
-            setMessages(room.timeline || []);
-          }
-        }
-      } catch (err) {
-        console.error(`Failed to handle unknown room ${roomId}:`, err);
-        setRoomJoinError(`Failed to join room ${roomId}: ${err.message}`);
-      }
-    };
-
-    const handleNewEvent = (event, room, toStartOfTimeline) => {
-      if (toStartOfTimeline) return;
-      if (!event || event.getType() !== 'm.room.message') return;
-
-      setMessages(prev => {
-        if (prev.some(m => m.getId() === event.getId())) return prev;
-        return [...prev, event];
-      });
-
-      if (room?.roomId === activeRoom?.roomId) {
-        setTimeout(() => {
-          const last = [...messages, event].reverse().find(e => e.getType() === 'm.room.message');
-          const platform = last?.getSender()?.split(':')[1]?.split('.')[0] || 'unknown';
-          setSelectedPlatform(platformMap[platform] ? platform : 'unknown');
-        }, 0);
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }
-    };
-
-    async function initMatrixClient() {
-      try {
-        setLoadingStates(prev => ({ ...prev, initial: true }));
-
-        // Check browser support
-        if (typeof indexedDB === 'undefined' || !window.crypto?.subtle) {
-          throw new Error('Your browser does not support required encryption features');
-        }
-
-        const res = await fetch('/api/get-matrix-token');
-        if (!res.ok) throw new Error('Not authenticated');
-        const { access_token, user_id } = await res.json();
-
-        if (!access_token || !user_id) {
-          throw new Error('Missing access token or user ID');
-        }
-
-        // Wait for Olm to be ready
-        await new Promise((resolve, reject) => {
-          const checkOlm = () => {
-            if (window.Olm?.isReady) {
-              resolve();
-            } else if (!window.Olm) {
-              setTimeout(checkOlm, 100);
-            } else {
-              reject(new Error('Olm failed to initialize'));
-            }
-          };
-          checkOlm();
-        });
-
-        // Create crypto store with fallback
-        let cryptoStore;
-        try {
-          cryptoStore = new sdk.IndexedDBCryptoStore(indexedDB, 'matrix-crypto-store');
-          console.log('Using IndexedDB crypto store');
-        } catch (err) {
-          console.warn('Failed to create IndexedDB store, falling back to memory:', err);
-          cryptoStore = new sdk.MemoryCryptoStore();
-        }
-
-        client = sdk.createClient({
-          baseUrl: 'https://matrix.social.sequoiasupport.com',
-          accessToken: access_token,
-          userId: user_id,
-          timelineSupport: true,
-          cryptoStore,
-          useAuthorizationHeader: true,
-          lazyLoadMembers: true,
-          cryptoCallbacks: {
-            getOlm: async () => {
-              return window.Olm;
-            }
-          }
-        });
-
-        // Initialize crypto
-        try {
-          if (client.initCrypto) {
-            console.log('Initializing crypto...');
-            await client.initCrypto();
-            await client.downloadKeys([user_id], true);
-            client.setGlobalBlacklistUnverifiedDevices(false);
-            console.log('Crypto initialized successfully');
-            setLoadingStates(prev => ({ ...prev, encryption: true }));
-          } else {
-            console.warn('Client built without crypto support');
-            setLoadingStates(prev => ({ ...prev, encryption: false }));
-          }
-        } catch (cryptoErr) {
-          console.error('Crypto initialization failed:', cryptoErr);
-          setErrorMsg(`Encryption setup failed: ${cryptoErr.message}`);
-          setLoadingStates(prev => ({ ...prev, encryption: false }));
-        }
-
-        // Event handlers
-        client.on('sync', (state) => {
-          if (state === 'PREPARED') {
-            retryCount = 0;
-            console.log('Sync prepared successfully');
-          }
-        });
-
-        const handleSyncError = (err) => {
-          if (unmounted) return;
-          console.error('Sync error:', err);
-          setErrorMsg(`Sync error: ${err.message}`);
-
-          if (retryCount < MAX_RETRIES) {
-            retryCount++;
-            const delay = Math.min(5000 * Math.pow(2, retryCount), 30000);
-            syncTimeout = setTimeout(() => {
-              if (client && !unmounted) client.startClient();
-            }, delay);
-          } else {
-            setErrorMsg('Failed to sync after multiple attempts');
-          }
-        };
-
-        client.on('sync.error', handleSyncError);
-        client.on('Session.logged_out', () => {
-          if (!unmounted) setErrorMsg('Session logged out');
-        });
-
-        client.on('Room.timeline', handleNewEvent);
-        client.on('RoomState.events', (event, state) => {
-          if (!client.getRoom(state.roomId)) {
-            handleUnknownRoom(state.roomId);
-          }
-        });
-
-        client.startClient();
-
-        await new Promise((resolve) => {
-          client.once('sync', (state) => {
-            if (state === 'PREPARED') resolve(null);
-          });
-        });
-
-        if (unmounted) return;
-
-        // Load rooms and contacts
-        const directMap = client.getAccountData('m.direct')?.getContent() || {};
-        const dmRoomIds = new Set(Object.values(directMap).flat());
-        const dmRooms = client.getRooms().filter(r => dmRoomIds.has(r.roomId));
-
-        const contactLinks = client.getAccountData('com.sequoiasocial.contact_linking')?.getContent()?.contacts || {};
-        const filteredContacts = Object.entries(contactLinks).map(([contactId, data]) => {
-          const roomObjects = {};
-          for (const [platform, roomId] of Object.entries(data.linkedRooms || {})) {
-            const room = client.getRoom(roomId);
-            const members = room?.getJoinedMembers() || [];
-            if (room && members.length === 2 && members.some(m => m.userId === contactId)) {
-              roomObjects[platform] = room;
-            }
-          }
-          return { contactId, linkedRooms: data.linkedRooms, roomObjects };
-        });
-
-        setMatrixClient(client);
-        setRooms(dmRooms);
-        setContacts(filteredContacts);
-
-        if (dmRooms.length > 0) {
-          setActiveRoom(dmRooms[0]);
-          setMessages(dmRooms[0].timeline || []);
-        }
-
-        setLoadingStates(prev => ({ ...prev, initial: false }));
-      } catch (err) {
-        console.error('Matrix client init failed:', err);
-        if (!unmounted) {
-          setErrorMsg(`Failed to connect: ${err.message}`);
-          setLoadingStates(prev => ({ ...prev, initial: false }));
-          if (err.message.includes('authenticated')) {
-            router.push('/login');
-          }
-        }
-      }
-    }
-
-    if (typeof window !== 'undefined') {
-      initMatrixClient();
-    }
-
-    return () => {
-      unmounted = true;
-      if (syncTimeout) clearTimeout(syncTimeout);
-      if (client) {
-        client.stopClient();
-        client.removeAllListeners();
-      }
-    };
-  }, [router]);
 
   // Update room settings when activeRoom or client changes
   useEffect(() => {
@@ -635,6 +323,232 @@ export default function ChatContent() {
       createDM(userId);
     }
   };
+
+  // Initialize Matrix client with modern crypto
+  useEffect(() => {
+    let unmounted = false;
+    let client = null;
+    let syncTimeout = null;
+    const MAX_RETRIES = 3;
+    let retryCount = 0;
+
+    const handleUnknownRoom = async (roomId) => {
+      if (!client || roomCacheRef.current.has(roomId)) return;
+      roomCacheRef.current.add(roomId);
+      console.warn(`Attempting to recover unknown room: ${roomId}`);
+      try {
+        let room = client.getRoom(roomId);
+        if (!room) {
+          console.log(`Joining room ${roomId}`);
+          room = await client.joinRoom(roomId);
+        }
+        if (room && !rooms.some(r => r.roomId === roomId)) {
+          console.log(`Adding room ${roomId} to state`);
+          setRooms(prev => [...prev, room]);
+          if (!activeRoom) {
+            setActiveRoom(room);
+            setMessages(room.timeline || []);
+          }
+        }
+      } catch (err) {
+        console.error(`Failed to handle unknown room ${roomId}:`, err);
+        setRoomJoinError(`Failed to join room ${roomId}: ${err.message}`);
+      }
+    };
+
+    const handleNewEvent = (event, room, toStartOfTimeline) => {
+      if (toStartOfTimeline) return;
+      if (!event || event.getType() !== 'm.room.message') return;
+
+      setMessages(prev => {
+        if (prev.some(m => m.getId() === event.getId())) return prev;
+        return [...prev, event];
+      });
+
+      if (room?.roomId === activeRoom?.roomId) {
+        setTimeout(() => {
+          const last = [...messages, event].reverse().find(e => e.getType() === 'm.room.message');
+          const platform = last?.getSender()?.split(':')[1]?.split('.')[0] || 'unknown';
+          setSelectedPlatform(platformMap[platform] ? platform : 'unknown');
+        }, 0);
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }
+    };
+
+    async function initCrypto(client) {
+      try {
+        setLoadingStates(prev => ({ ...prev, cryptoInit: true }));
+        
+        // Initialize the Rust crypto module
+        await matrixCrypto.initAsync();
+        
+        // Initialize client crypto
+        await client.initCrypto();
+        
+        // Set up cross-signing and device keys
+        await client.bootstrapCrossSigning({
+          authUploadDeviceSigningKeys: async (makeRequest) => {
+            return makeRequest({});
+          }
+        });
+        
+        setLoadingStates(prev => ({ ...prev, encryption: true, cryptoInit: false }));
+        return true;
+      } catch (err) {
+        console.error('Crypto initialization failed:', err);
+        setErrorMsg(`Encryption setup failed: ${err.message}`);
+        setLoadingStates(prev => ({ ...prev, encryption: false, cryptoInit: false }));
+        return false;
+      }
+    }
+
+    async function initMatrixClient() {
+      try {
+        setLoadingStates(prev => ({ ...prev, initial: true }));
+
+        // Check browser support
+        if (typeof indexedDB === 'undefined' || !window.crypto?.subtle) {
+          throw new Error('Your browser does not support required encryption features');
+        }
+
+        const res = await fetch('/api/get-matrix-token');
+        if (!res.ok) throw new Error('Not authenticated');
+        const { access_token, user_id } = await res.json();
+
+        if (!access_token || !user_id) {
+          throw new Error('Missing access token or user ID');
+        }
+
+        // Create client with IndexedDB store
+        const store = new sdk.IndexedDBStore({
+          indexedDB: window.indexedDB,
+          localStorage: window.localStorage,
+          dbName: 'matrix-js-sdk-store',
+        });
+
+        await store.startup();
+
+        client = sdk.createClient({
+          baseUrl: 'https://matrix.social.sequoiasupport.com',
+          accessToken: access_token,
+          userId: user_id,
+          store,
+          timelineSupport: true,
+          useAuthorizationHeader: true,
+          lazyLoadMembers: true,
+          cryptoStore: new sdk.IndexedDBCryptoStore(indexedDB, 'matrix-crypto-store'),
+        });
+
+        // Initialize crypto if available
+        if (client.initCrypto) {
+          const cryptoSuccess = await initCrypto(client);
+          if (!cryptoSuccess) {
+            console.warn('Continuing without encryption support');
+          }
+        } else {
+          console.warn('Client built without crypto support');
+          setLoadingStates(prev => ({ ...prev, encryption: false }));
+        }
+
+        // Event handlers
+        client.on('sync', (state) => {
+          if (state === 'PREPARED') {
+            retryCount = 0;
+            console.log('Sync prepared successfully');
+          }
+        });
+
+        const handleSyncError = (err) => {
+          if (unmounted) return;
+          console.error('Sync error:', err);
+          setErrorMsg(`Sync error: ${err.message}`);
+
+          if (retryCount < MAX_RETRIES) {
+            retryCount++;
+            const delay = Math.min(5000 * Math.pow(2, retryCount), 30000);
+            syncTimeout = setTimeout(() => {
+              if (client && !unmounted) client.startClient();
+            }, delay);
+          } else {
+            setErrorMsg('Failed to sync after multiple attempts');
+          }
+        };
+
+        client.on('sync.error', handleSyncError);
+        client.on('Session.logged_out', () => {
+          if (!unmounted) setErrorMsg('Session logged out');
+        });
+
+        client.on('Room.timeline', handleNewEvent);
+        client.on('RoomState.events', (event, state) => {
+          if (!client.getRoom(state.roomId)) {
+            handleUnknownRoom(state.roomId);
+          }
+        });
+
+        client.startClient();
+
+        await new Promise((resolve) => {
+          client.once('sync', (state) => {
+            if (state === 'PREPARED') resolve(null);
+          });
+        });
+
+        if (unmounted) return;
+
+        // Load rooms and contacts
+        const directMap = client.getAccountData('m.direct')?.getContent() || {};
+        const dmRoomIds = new Set(Object.values(directMap).flat());
+        const dmRooms = client.getRooms().filter(r => dmRoomIds.has(r.roomId));
+
+        const contactLinks = client.getAccountData('com.sequoiasocial.contact_linking')?.getContent()?.contacts || {};
+        const filteredContacts = Object.entries(contactLinks).map(([contactId, data]) => {
+          const roomObjects = {};
+          for (const [platform, roomId] of Object.entries(data.linkedRooms || {})) {
+            const room = client.getRoom(roomId);
+            const members = room?.getJoinedMembers() || [];
+            if (room && members.length === 2 && members.some(m => m.userId === contactId)) {
+              roomObjects[platform] = room;
+            }
+          }
+          return { contactId, linkedRooms: data.linkedRooms, roomObjects };
+        });
+
+        setMatrixClient(client);
+        setRooms(dmRooms);
+        setContacts(filteredContacts);
+
+        if (dmRooms.length > 0) {
+          setActiveRoom(dmRooms[0]);
+          setMessages(dmRooms[0].timeline || []);
+        }
+
+        setLoadingStates(prev => ({ ...prev, initial: false }));
+      } catch (err) {
+        console.error('Matrix client init failed:', err);
+        if (!unmounted) {
+          setErrorMsg(`Failed to connect: ${err.message}`);
+          setLoadingStates(prev => ({ ...prev, initial: false }));
+          if (err.message.includes('authenticated')) {
+            router.push('/login');
+          }
+        }
+      }
+    }
+
+    if (typeof window !== 'undefined') {
+      initMatrixClient();
+    }
+
+    return () => {
+      unmounted = true;
+      if (syncTimeout) clearTimeout(syncTimeout);
+      if (client) {
+        client.stopClient();
+        client.removeAllListeners();
+      }
+    };
+  }, [router]);
 
   if (loadingStates.initial) return <div className="loading">Loading chat...</div>;
   if (errorMsg) return <div className="error-message">{errorMsg}</div>;
