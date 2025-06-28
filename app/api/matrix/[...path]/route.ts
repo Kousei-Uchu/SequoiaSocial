@@ -1,54 +1,91 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+// app/api/matrix/[...path]/route.ts
+import { NextRequest, NextResponse } from 'next/server';
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  // Handle OPTIONS request for CORS preflight
-  if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-    return res.status(200).end();
-  }
+export async function GET(request: NextRequest) {
+  return handleMatrixRequest(request);
+}
 
-  // Extract the Matrix API path from the request
-  const path = Array.isArray(req.query.path) ? req.query.path.join('/') : '';
-  const matrixUrl = `https://matrix.social.sequoiasupport.com/_matrix/client/v3/${path}`;
+export async function POST(request: NextRequest) {
+  return handleMatrixRequest(request);
+}
+
+export async function PUT(request: NextRequest) {
+  return handleMatrixRequest(request);
+}
+
+export async function DELETE(request: NextRequest) {
+  return handleMatrixRequest(request);
+}
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+    }
+  });
+}
+
+async function handleMatrixRequest(request: NextRequest) {
+  const path = request.nextUrl.pathname.split('/api/matrix/')[1];
+  const matrixUrl = new URL(`https://matrix.social.sequoiasupport.com/_matrix/client/v3/${path}`);
   
-  // Forward necessary headers
-  const headers: Record<string, string> = {
+  // Forward query parameters
+  request.nextUrl.searchParams.forEach((value, key) => {
+    matrixUrl.searchParams.append(key, value);
+  });
+
+  const headers = new Headers({
     'Content-Type': 'application/json',
     'Accept': 'application/json'
-  };
+  });
 
   // Forward authorization if present
-  if (req.headers.authorization) {
-    headers['Authorization'] = req.headers.authorization;
+  const authHeader = request.headers.get('Authorization');
+  if (authHeader) {
+    headers.set('Authorization', authHeader);
   }
 
   try {
-    const response = await fetch(matrixUrl, {
-      method: req.method,
+    const response = await fetch(matrixUrl.toString(), {
+      method: request.method,
       headers,
-      body: req.method !== 'GET' && req.method !== 'HEAD' ? JSON.stringify(req.body) : undefined
+      body: ['GET', 'HEAD'].includes(request.method) ? undefined : await request.text()
     });
 
-    // Forward the response headers
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    
-    // Handle non-JSON responses
+    // Handle response
     const contentType = response.headers.get('content-type');
-    if (contentType && contentType.includes('application/json')) {
+    const responseHeaders = new Headers({
+      'Access-Control-Allow-Origin': '*'
+    });
+
+    if (contentType?.includes('application/json')) {
       const data = await response.json();
-      return res.status(response.status).json(data);
+      return new NextResponse(JSON.stringify(data), {
+        status: response.status,
+        headers: responseHeaders
+      });
     } else {
       const text = await response.text();
-      return res.status(response.status).send(text);
+      return new NextResponse(text, {
+        status: response.status,
+        headers: responseHeaders
+      });
     }
   } catch (error) {
     console.error('Matrix proxy error:', error);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    return res.status(500).json({ 
-      error: 'Failed to communicate with Matrix server',
-      details: error.message 
-    });
+    return NextResponse.json(
+      { 
+        error: 'Failed to communicate with Matrix server',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      },
+      { 
+        status: 500,
+        headers: {
+          'Access-Control-Allow-Origin': '*'
+        }
+      }
+    );
   }
 }

@@ -11,12 +11,10 @@ import {
   faFacebookMessenger,
   faGoogle,
   faApple,
-  faSms,
   faComment,
-  faPlus,
-  faTrash,
+  faPlus
 } from '@fortawesome/free-brands-svg-icons';
-import { faQuestionCircle } from '@fortawesome/free-solid-svg-icons';
+import { faQuestionCircle, faTrash, faSms } from '@fortawesome/free-solid-svg-icons';
 
 const platformMap = {
   discord: { icon: faDiscord },
