@@ -103,7 +103,7 @@ export default function ChatContent() {
     async function initMatrixClient() {
       try {
         setLoadingStates(prev => ({ ...prev, initial: true }));
-        
+
         // Fetch access token and user id from your backend API
         const res = await fetch('/api/get-matrix-token');
         if (!res.ok) throw new Error('Not authenticated');
@@ -175,7 +175,7 @@ export default function ChatContent() {
         setMatrixClient(client);
         setRooms(dmRooms);
         setContacts(filteredContacts);
-        
+
         if (dmRooms.length > 0) {
           setActiveRoom(dmRooms[0]);
           setMessages(dmRooms[0].timeline || []);
@@ -198,7 +198,7 @@ export default function ChatContent() {
 
     function handleNewEvent(event, room, toStartOfTimeline) {
       if (toStartOfTimeline || !event || event.getType() !== 'm.room.message') return;
-      
+
       setMessages(prev => {
         // Deduplicate messages
         if (prev.some(m => m.getId() === event.getId())) return prev;
@@ -398,6 +398,41 @@ export default function ChatContent() {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  async function createDM(userId) {
+    if (!matrixClient) return;
+
+    try {
+      const options = {
+        preset: 'trusted_private_chat', // Matrix preset for DMs
+        is_direct: true, // Mark as DM
+        invite: [userId], // User to invite
+        visibility: 'private', // Make room private
+        // Optional: Enable encryption
+        initial_state: [{
+          type: 'm.room.encryption',
+          state_key: '',
+          content: {
+            algorithm: 'm.megolm.v1.aes-sha2'
+          }
+        }]
+      };
+
+      const { room_id } = await matrixClient.createRoom(options);
+      console.log('Created DM room:', room_id);
+      return room_id;
+    } catch (err) {
+      console.error('Failed to create DM:', err);
+      setErrorMsg('Failed to create DM: ' + err.message);
+    }
+  }
+
+  const promptForDM = () => {
+    const userId = prompt("Enter Matrix User ID (e.g. @user:server.com)");
+    if (userId) {
+      createDM(userId);
+    }
+  };
+
   if (loadingStates.initial) return <div className="loading">Loading chat...</div>;
   if (errorMsg) return <div className="error-message">{errorMsg}</div>;
 
@@ -407,6 +442,13 @@ export default function ChatContent() {
         <div className="search-bar">
           <input type="text" placeholder="Search DMs..." />
         </div>
+
+        <button
+          onClick={() => promptForDM()}
+          className="new-dm-button"
+        >
+          + New DM
+        </button>
 
         <h4>📩 Direct Messages</h4>
         {rooms.map((room) => {
@@ -907,6 +949,20 @@ export default function ChatContent() {
           border-radius: 8px;
           margin: 1rem;
           text-align: center;
+        }
+
+        .new-dm-button {
+          background: #4CAF50;
+          color: white;
+          border: none;
+          padding: 0.5rem 1rem;
+          border-radius: 4px;
+          margin: 0.5rem 0;
+          cursor: pointer;
+        }
+
+        .new-dm-button:hover {
+          background: #45a049;
         }
       `}</style>
     </div>
