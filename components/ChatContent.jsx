@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-// FontAwesome brand icons
 import {
   faDiscord,
   faTelegram,
@@ -16,8 +15,6 @@ import {
   faGoogle,
   faApple,
 } from '@fortawesome/free-brands-svg-icons';
-
-// FontAwesome solid icons
 import {
   faQuestionCircle,
   faLock,
@@ -32,7 +29,7 @@ import {
   faTrash,
 } from '@fortawesome/free-solid-svg-icons';
 
-// FontAwesome config
+// FontAwesome configuration
 import { config } from '@fortawesome/fontawesome-svg-core';
 import '@fortawesome/fontawesome-svg-core/styles.css';
 config.autoAddCss = false;
@@ -70,7 +67,6 @@ const guestAccessOptions = [
 
 export default function ChatContent() {
   const router = useRouter();
-
   const [matrixClient, setMatrixClient] = useState(null);
   const [rooms, setRooms] = useState([]);
   const [contacts, setContacts] = useState([]);
@@ -88,7 +84,6 @@ export default function ChatContent() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsRoom, setSettingsRoom] = useState(null);
   const [roomJoinError, setRoomJoinError] = useState(null);
-
   const [roomName, setRoomName] = useState('');
   const [roomTopic, setRoomTopic] = useState('');
   const [joinRule, setJoinRule] = useState('invite');
@@ -98,34 +93,66 @@ export default function ChatContent() {
   const [powerLevels, setPowerLevels] = useState({});
   const [userPowerLevel, setUserPowerLevel] = useState(0);
   const [saving, setSaving] = useState(false);
-
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const isPaginatingRef = useRef(false);
   const roomCacheRef = useRef(new Set());
 
-  // Load Olm once, client-side only
+  // Enhanced Olm loading with CDN fallback
   useEffect(() => {
     async function loadOlm() {
       if (typeof window === 'undefined') return;
-      if (window.Olm) return;
+      if (window.Olm?.isReady) {
+        console.log('Olm already loaded');
+        return;
+      }
 
-      await new Promise((resolve, reject) => {
+      try {
+        console.log('Attempting to load Olm...');
         const script = document.createElement('script');
         script.src = '/olm/olm.js';
-        script.onload = resolve;
-        script.onerror = () => reject(new Error('Failed to load olm.js'));
-        document.body.appendChild(script);
-      });
+        
+        script.onload = async () => {
+          console.log('Olm script loaded, initializing...');
+          try {
+            await window.Olm.init();
+            console.log('Olm initialized successfully');
+          } catch (initErr) {
+            console.error('Olm initialization failed:', initErr);
+            throw initErr;
+          }
+        };
 
-      await window.Olm.init();
-      console.log('Olm loaded and initialized');
+        script.onerror = async () => {
+          console.warn('Local Olm failed, trying CDN...');
+          const cdnScript = document.createElement('script');
+          cdnScript.src = 'https://unpkg.com/@matrix-org/olm@3.2.4/olm.js';
+          
+          cdnScript.onload = async () => {
+            console.log('CDN Olm loaded, initializing...');
+            await window.Olm.init();
+            console.log('CDN Olm initialized');
+          };
+          
+          cdnScript.onerror = () => {
+            console.error('Failed to load Olm from both sources');
+            setErrorMsg('Failed to load encryption library');
+          };
+          
+          document.body.appendChild(cdnScript);
+        };
+
+        document.body.appendChild(script);
+      } catch (err) {
+        console.error('Olm loading error:', err);
+        setErrorMsg('Encryption setup failed');
+      }
     }
 
     loadOlm();
   }, []);
 
-  // Main Matrix client setup
+  // Main Matrix client setup with proper crypto handling
   useEffect(() => {
     let unmounted = false;
     let client = null;
@@ -167,27 +194,23 @@ export default function ChatContent() {
       });
 
       if (room?.roomId === activeRoom?.roomId) {
-        setTimeout(() => detectPlatform([...messages, event]), 0);
+        setTimeout(() => {
+          const last = [...messages, event].reverse().find(e => e.getType() === 'm.room.message');
+          const platform = last?.getSender()?.split(':')[1]?.split('.')[0] || 'unknown';
+          setSelectedPlatform(platformMap[platform] ? platform : 'unknown');
+        }, 0);
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }
     };
 
     async function initMatrixClient() {
       try {
-        // Load Olm only once
-        if (typeof window !== 'undefined' && !window.Olm) {
-          await new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = '/olm/olm.js';  // Make sure this path is correct and served!
-            script.onload = resolve;
-            script.onerror = reject;
-            document.body.appendChild(script);
-          });
-          await window.Olm.init();
-          console.log('Olm loaded and initialized');
-        }
-
         setLoadingStates(prev => ({ ...prev, initial: true }));
+
+        // Check browser support
+        if (typeof indexedDB === 'undefined' || !window.crypto?.subtle) {
+          throw new Error('Your browser does not support required encryption features');
+        }
 
         const res = await fetch('/api/get-matrix-token');
         if (!res.ok) throw new Error('Not authenticated');
@@ -197,10 +220,29 @@ export default function ChatContent() {
           throw new Error('Missing access token or user ID');
         }
 
-        // IndexedDB crypto store if available
-        const cryptoStore = typeof indexedDB !== 'undefined'
-          ? new sdk.IndexedDBCryptoStore(indexedDB, 'matrix-crypto-store')
-          : null;
+        // Wait for Olm to be ready
+        await new Promise((resolve, reject) => {
+          const checkOlm = () => {
+            if (window.Olm?.isReady) {
+              resolve();
+            } else if (!window.Olm) {
+              setTimeout(checkOlm, 100);
+            } else {
+              reject(new Error('Olm failed to initialize'));
+            }
+          };
+          checkOlm();
+        });
+
+        // Create crypto store with fallback
+        let cryptoStore;
+        try {
+          cryptoStore = new sdk.IndexedDBCryptoStore(indexedDB, 'matrix-crypto-store');
+          console.log('Using IndexedDB crypto store');
+        } catch (err) {
+          console.warn('Failed to create IndexedDB store, falling back to memory:', err);
+          cryptoStore = new sdk.MemoryCryptoStore();
+        }
 
         client = sdk.createClient({
           baseUrl: 'https://matrix.social.sequoiasupport.com',
@@ -210,20 +252,33 @@ export default function ChatContent() {
           cryptoStore,
           useAuthorizationHeader: true,
           lazyLoadMembers: true,
+          cryptoCallbacks: {
+            getOlm: async () => {
+              return window.Olm;
+            }
+          }
         });
 
+        // Initialize crypto
         try {
-          await client.initCrypto();
-          await client.downloadKeys([user_id], true);
-          client.setGlobalBlacklistUnverifiedDevices(false);
-          console.log('Matrix crypto initialized');
-          setLoadingStates(prev => ({ ...prev, encryption: true }));
+          if (client.initCrypto) {
+            console.log('Initializing crypto...');
+            await client.initCrypto();
+            await client.downloadKeys([user_id], true);
+            client.setGlobalBlacklistUnverifiedDevices(false);
+            console.log('Crypto initialized successfully');
+            setLoadingStates(prev => ({ ...prev, encryption: true }));
+          } else {
+            console.warn('Client built without crypto support');
+            setLoadingStates(prev => ({ ...prev, encryption: false }));
+          }
         } catch (cryptoErr) {
-          console.warn('Crypto initialization failed:', cryptoErr);
+          console.error('Crypto initialization failed:', cryptoErr);
+          setErrorMsg(`Encryption setup failed: ${cryptoErr.message}`);
           setLoadingStates(prev => ({ ...prev, encryption: false }));
         }
 
-        // Setup event handlers
+        // Event handlers
         client.on('sync', (state) => {
           if (state === 'PREPARED') {
             retryCount = 0;
@@ -239,32 +294,26 @@ export default function ChatContent() {
           if (retryCount < MAX_RETRIES) {
             retryCount++;
             const delay = Math.min(5000 * Math.pow(2, retryCount), 30000);
-            console.log(`Retrying sync in ${delay / 1000} seconds (attempt ${retryCount}/${MAX_RETRIES})`);
             syncTimeout = setTimeout(() => {
-              if (client && !unmounted) {
-                client.startClient();
-              }
+              if (client && !unmounted) client.startClient();
             }, delay);
           } else {
-            setErrorMsg('Failed to sync after multiple attempts. Please refresh.');
+            setErrorMsg('Failed to sync after multiple attempts');
           }
         };
 
         client.on('sync.error', handleSyncError);
-
         client.on('Session.logged_out', () => {
           if (!unmounted) setErrorMsg('Session logged out');
         });
 
         client.on('Room.timeline', handleNewEvent);
-
         client.on('RoomState.events', (event, state) => {
           if (!client.getRoom(state.roomId)) {
             handleUnknownRoom(state.roomId);
           }
         });
 
-        // Only start the client after crypto init attempt
         client.startClient();
 
         await new Promise((resolve) => {
@@ -275,6 +324,7 @@ export default function ChatContent() {
 
         if (unmounted) return;
 
+        // Load rooms and contacts
         const directMap = client.getAccountData('m.direct')?.getContent() || {};
         const dmRoomIds = new Set(Object.values(directMap).flat());
         const dmRooms = client.getRooms().filter(r => dmRoomIds.has(r.roomId));
@@ -302,12 +352,14 @@ export default function ChatContent() {
         }
 
         setLoadingStates(prev => ({ ...prev, initial: false }));
-
       } catch (err) {
         console.error('Matrix client init failed:', err);
         if (!unmounted) {
           setErrorMsg(`Failed to connect: ${err.message}`);
           setLoadingStates(prev => ({ ...prev, initial: false }));
+          if (err.message.includes('authenticated')) {
+            router.push('/login');
+          }
         }
       }
     }
@@ -324,8 +376,7 @@ export default function ChatContent() {
         client.removeAllListeners();
       }
     };
-  }, []);
-
+  }, [router]);
 
   // Update room settings when activeRoom or client changes
   useEffect(() => {
@@ -435,6 +486,11 @@ export default function ChatContent() {
 
   const canUserEnableEncryption = (room) => {
     if (!matrixClient || !room) return false;
+    if (!matrixClient.isCryptoEnabled()) {
+      console.warn('Client does not support encryption');
+      return false;
+    }
+    
     const powerLevels = room.currentState.getStateEvents('m.room.power_levels')[0]?.getContent() || {};
     const userPower = powerLevels.users?.[matrixClient.getUserId()] ?? powerLevels.users_default ?? 0;
     const requiredPower = powerLevels.events?.['m.room.encryption'] ?? 50;
@@ -562,6 +618,14 @@ export default function ChatContent() {
         >
           <FontAwesomeIcon icon={faPlus} /> New DM
         </button>
+
+        <div className="crypto-status">
+          Encryption: {loadingStates.encryption ? (
+            <span style={{ color: '#4caf50' }}>Enabled <FontAwesomeIcon icon={faLock} /></span>
+          ) : (
+            <span style={{ color: '#f44336' }}>Disabled <FontAwesomeIcon icon={faUnlock} /></span>
+          )}
+        </div>
 
         {roomJoinError && (
           <div className="error-message" style={{ margin: '0.5rem 0' }}>
@@ -1055,7 +1119,7 @@ export default function ChatContent() {
           padding: 0.25rem;
         }
 
-                .new-dm-button {
+        .new-dm-button {
           width: 100%;
           padding: 0.5rem;
           margin-bottom: 1rem;
@@ -1092,6 +1156,14 @@ export default function ChatContent() {
           border-radius: 6px;
           margin: 1rem;
           font-weight: bold;
+        }
+        
+        .crypto-status {
+          padding: 0.5rem;
+          background: #2a2a2a;
+          border-radius: 4px;
+          margin: 0.5rem 0;
+          font-size: 0.9rem;
         }
         
         @media (max-width: 768px) {
