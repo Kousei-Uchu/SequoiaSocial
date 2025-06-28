@@ -6,26 +6,29 @@ import { useRouter } from 'next/navigation';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import {
-  faDiscord,
-  faTelegram,
-  faTwitter,
-  faWhatsapp,
-  faFacebookMessenger,
-  faGoogle,
-  faApple,
-  faSms,
-  faComment,
+// Correct imports for the icons you're using:
+import { 
+  faDiscord, 
+  faTelegram, 
+  faTwitter, 
+  faWhatsapp, 
+  faFacebookMessenger, 
+  faGoogle, 
+  faApple 
 } from '@fortawesome/free-brands-svg-icons';
-import {
-  faQuestionCircle,
-  faLock,
-  faUnlock,
-  faCog,
-  faExclamationTriangle,
-  faTimes,
-  faUserShield,
+
+import { 
+  faQuestionCircle, 
+  faLock, 
+  faUnlock, 
+  faCog, 
+  faExclamationTriangle, 
+  faTimes, 
+  faUserShield, 
   faPlus,
+  faComment,
+  faSms,
+  faTrash
 } from '@fortawesome/free-solid-svg-icons';
 
 // FontAwesome configuration

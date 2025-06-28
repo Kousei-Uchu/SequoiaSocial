@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import sdk from 'matrix-js-sdk';
+import * as sdk from 'matrix-js-sdk';
 
 export default function LoginPage() {
   const router = useRouter();
