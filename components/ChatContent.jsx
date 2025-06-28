@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import * as sdk from 'matrix-js-sdk';
 import { useRouter } from 'next/navigation';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faDiscord,
@@ -25,6 +26,11 @@ import {
   faTimes,
   faUserShield,
 } from '@fortawesome/free-solid-svg-icons';
+
+// FontAwesome configuration
+import { config } from '@fortawesome/fontawesome-svg-core';
+import '@fortawesome/fontawesome-svg-core/styles.css';
+config.autoAddCss = false;
 
 const platformMap = {
   discord: { color: 'linear-gradient(135deg, #7289da, #5865f2)', icon: faDiscord },
@@ -59,7 +65,6 @@ const guestAccessOptions = [
 
 export default function ChatContent() {
   const router = useRouter();
-
   const [matrixClient, setMatrixClient] = useState(null);
   const [rooms, setRooms] = useState([]);
   const [contacts, setContacts] = useState([]);
@@ -68,7 +73,11 @@ export default function ChatContent() {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [selectedPlatform, setSelectedPlatform] = useState('unknown');
-  const [loading, setLoading] = useState(true);
+  const [loadingStates, setLoadingStates] = useState({
+    initial: true,
+    messages: false,
+    encryption: false,
+  });
   const [errorMsg, setErrorMsg] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsRoom, setSettingsRoom] = useState(null);
@@ -88,8 +97,13 @@ export default function ChatContent() {
   const isPaginatingRef = useRef(false);
 
   useEffect(() => {
+    let unmounted = false;
+    let client = null;
+
     async function initMatrixClient() {
       try {
+        setLoadingStates(prev => ({ ...prev, initial: true }));
+        
         // Fetch access token and user id from your backend API
         const res = await fetch('/api/get-matrix-token');
         if (!res.ok) throw new Error('Not authenticated');
@@ -103,14 +117,27 @@ export default function ChatContent() {
         const homeserver = 'https://matrix.social.sequoiasupport.com';
 
         // Create Matrix client instance
-        const client = sdk.createClient({
+        client = sdk.createClient({
           baseUrl: homeserver,
           accessToken: access_token,
           userId: user_id,
+          timelineSupport: true,
+          cryptoStore: new sdk.IndexedDBCryptoStore(indexedDB, 'matrix-js-sdk-crypto-store'),
+          useAuthorizationHeader: true
         });
 
-        // Initialize end-to-end encryption if enabled
-        await client.initCrypto();
+        // Initialize end-to-end encryption if available
+        try {
+          if (client.initCrypto) {
+            await client.initCrypto();
+          } else if (client.crypto?.init) {
+            await client.crypto.init();
+          }
+          setLoadingStates(prev => ({ ...prev, encryption: true }));
+        } catch (cryptoErr) {
+          console.warn("Crypto initialization failed", cryptoErr);
+          setLoadingStates(prev => ({ ...prev, encryption: false }));
+        }
 
         // Start syncing
         client.startClient();
@@ -124,12 +151,14 @@ export default function ChatContent() {
           });
         });
 
-        // Load direct messages and contacts, etc.
+        if (unmounted) return;
+
+        // Load direct messages and contacts
         const directMap = client.getAccountData('m.direct')?.getContent() || {};
         const dmRoomIds = new Set(Object.values(directMap).flat());
         const dmRooms = client.getRooms().filter(r => dmRoomIds.has(r.roomId));
 
-        // Load contact links if you use them (optional)
+        // Load contact links
         const contactLinks = client.getAccountData('com.sequoiasocial.contact_linking')?.getContent()?.contacts || {};
         const filteredContacts = Object.entries(contactLinks).map(([contactId, data]) => {
           const roomObjects = {};
@@ -143,32 +172,56 @@ export default function ChatContent() {
           return { contactId, linkedRooms: data.linkedRooms, roomObjects };
         });
 
-        // Set state accordingly (you'll need setMatrixClient, setRooms, setContacts, etc.)
         setMatrixClient(client);
         setRooms(dmRooms);
         setContacts(filteredContacts);
-        setActiveRoom(dmRooms[0] || null);
-        setMessages(dmRooms[0]?.timeline || []);
-        detectPlatform(dmRooms[0]?.timeline || []);
-        setLoading(false);
+        
+        if (dmRooms.length > 0) {
+          setActiveRoom(dmRooms[0]);
+          setMessages(dmRooms[0].timeline || []);
+          detectPlatform(dmRooms[0].timeline || []);
+        }
+
+        setLoadingStates(prev => ({ ...prev, initial: false }));
 
         // Add event listener for new messages
-        client.on('Room.timeline', (event, room, toStartOfTimeline) => {
-          if (toStartOfTimeline) return;
-          if (room.roomId === activeRoom?.roomId && event.getType() === 'm.room.message') {
-            setMessages((msgs) => [...msgs, event]);
-            detectPlatform([...messages, event]);
-            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-          }
-        });
+        client.on('Room.timeline', handleNewEvent);
+
       } catch (err) {
         console.error('Matrix client init failed:', err);
-        setErrorMsg('Failed to connect to Matrix.');
-        setLoading(false);
+        if (!unmounted) {
+          setErrorMsg(`Failed to connect to Matrix: ${err.message}`);
+          setLoadingStates(prev => ({ ...prev, initial: false }));
+        }
       }
     }
 
-    initMatrixClient();
+    function handleNewEvent(event, room, toStartOfTimeline) {
+      if (toStartOfTimeline || !event || event.getType() !== 'm.room.message') return;
+      
+      setMessages(prev => {
+        // Deduplicate messages
+        if (prev.some(m => m.getId() === event.getId())) return prev;
+        return [...prev, event];
+      });
+
+      if (room.roomId === activeRoom?.roomId) {
+        detectPlatform([...messages, event]);
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }
+    }
+
+    if (typeof window !== 'undefined') {
+      initMatrixClient();
+    }
+
+    return () => {
+      unmounted = true;
+      if (client) {
+        client.removeListener('Room.timeline', handleNewEvent);
+        client.stopClient();
+      }
+    };
   }, [router]);
 
   useEffect(() => {
@@ -345,8 +398,8 @@ export default function ChatContent() {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  if (loading) return <div>Loading chat...</div>;
-  if (errorMsg) return <div style={{ color: 'red' }}>{errorMsg}</div>;
+  if (loadingStates.initial) return <div className="loading">Loading chat...</div>;
+  if (errorMsg) return <div className="error-message">{errorMsg}</div>;
 
   return (
     <div className="main-layout">
@@ -421,7 +474,7 @@ export default function ChatContent() {
                   <span>{event.getSender()}</span>
                   <time className="message-time">{formatTime(event.getTs())}</time>
                 </div>
-                <div dangerouslySetInnerHTML={{ __html: marked.parse(content.body) }} />
+                <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(content.body)) }} />
               </div>
             );
           })}
@@ -839,6 +892,21 @@ export default function ChatContent() {
           border-radius: 3px;
           color: white;
           padding: 0.25rem;
+        }
+
+        .loading {
+          padding: 2rem;
+          text-align: center;
+          color: #aaa;
+        }
+        
+        .error-message {
+          padding: 2rem;
+          color: #ff6b6b;
+          background: #2a0a0a;
+          border-radius: 8px;
+          margin: 1rem;
+          text-align: center;
         }
       `}</style>
     </div>
