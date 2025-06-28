@@ -95,6 +95,7 @@ export default function ChatContent() {
   const [powerLevels, setPowerLevels] = useState({});
   const [userPowerLevel, setUserPowerLevel] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [connectionState, setConnectionState] = useState('disconnected');
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const isPaginatingRef = useRef(false);
@@ -402,6 +403,29 @@ export default function ChatContent() {
       }
     }
 
+    const handleSyncError = (err) => {
+      if (unmounted) return;
+      
+      console.error('Sync error:', err);
+      setErrorMsg(`Connection issue: ${err.message}`);
+      setConnectionState('disconnected');
+      
+      // Exponential backoff for retries
+      const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+      
+      if (retryCount < MAX_RETRIES) {
+        retryCount++;
+        syncTimeout = setTimeout(() => {
+          if (client && !unmounted) {
+            console.log(`Retrying sync (attempt ${retryCount})...`);
+            client.startClient();
+          }
+        }, delay);
+      } else {
+        setErrorMsg('Failed to sync after multiple attempts. Please refresh the page.');
+      }
+    };
+
     async function initMatrixClient() {
       try {
         setLoadingStates(prev => ({ ...prev, initial: true }));
@@ -419,25 +443,28 @@ export default function ChatContent() {
           throw new Error('Missing access token or user ID');
         }
 
-        // Create client with IndexedDB store
+        // 1. First create the client without store
+        client = sdk.createClient({
+          baseUrl: 'https://matrix.social.sequoiasupport.com',
+          accessToken: access_token,
+          userId: user_id,
+          timelineSupport: true,
+          useAuthorizationHeader: true,
+          lazyLoadMembers: true,
+        });
+
+        // 2. Then create and assign the store
         const store = new sdk.IndexedDBStore({
           indexedDB: window.indexedDB,
           localStorage: window.localStorage,
           dbName: 'matrix-js-sdk-store',
         });
-
+        
+        // 3. Assign store to client BEFORE startup
+        client.store = store;
+        
+        // 4. Now startup the store
         await store.startup();
-
-        client = sdk.createClient({
-          baseUrl: 'https://matrix.social.sequoiasupport.com',
-          accessToken: access_token,
-          userId: user_id,
-          store,
-          timelineSupport: true,
-          useAuthorizationHeader: true,
-          lazyLoadMembers: true,
-          cryptoStore: new sdk.IndexedDBCryptoStore(indexedDB, 'matrix-crypto-store'),
-        });
 
         // Initialize crypto if available
         if (client.initCrypto) {
@@ -451,28 +478,17 @@ export default function ChatContent() {
         }
 
         // Event handlers
-        client.on('sync', (state) => {
+        client.on('sync', (state, prevState, data) => {
           if (state === 'PREPARED') {
+            setConnectionState('connected');
             retryCount = 0;
             console.log('Sync prepared successfully');
+          } else if (state === 'ERROR') {
+            setConnectionState('disconnected');
+          } else if (state === 'RECONNECTING') {
+            setConnectionState('reconnecting');
           }
         });
-
-        const handleSyncError = (err) => {
-          if (unmounted) return;
-          console.error('Sync error:', err);
-          setErrorMsg(`Sync error: ${err.message}`);
-
-          if (retryCount < MAX_RETRIES) {
-            retryCount++;
-            const delay = Math.min(5000 * Math.pow(2, retryCount), 30000);
-            syncTimeout = setTimeout(() => {
-              if (client && !unmounted) client.startClient();
-            }, delay);
-          } else {
-            setErrorMsg('Failed to sync after multiple attempts');
-          }
-        };
 
         client.on('sync.error', handleSyncError);
         client.on('Session.logged_out', () => {
@@ -540,8 +556,18 @@ export default function ChatContent() {
       initMatrixClient();
     }
 
+    // Network status listener
+    const handleOnline = () => {
+      if (connectionState === 'disconnected' && !loadingStates.initial) {
+        initMatrixClient();
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+
     return () => {
       unmounted = true;
+      window.removeEventListener('online', handleOnline);
       if (syncTimeout) clearTimeout(syncTimeout);
       if (client) {
         client.stopClient();
@@ -566,6 +592,35 @@ export default function ChatContent() {
         >
           <FontAwesomeIcon icon={faPlus} /> New DM
         </button>
+
+        <div className="connection-status" style={{
+          backgroundColor: connectionState === 'connected' ? '#4CAF50' : 
+                         connectionState === 'reconnecting' ? '#FFC107' : '#F44336',
+          padding: '0.5rem',
+          borderRadius: '4px',
+          margin: '0.5rem 0',
+          textAlign: 'center',
+          fontWeight: 'bold'
+        }}>
+          {connectionState === 'connected' ? 'Connected' : 
+           connectionState === 'reconnecting' ? 'Reconnecting...' : 'Disconnected'}
+          {connectionState === 'disconnected' && (
+            <button 
+              onClick={() => initMatrixClient()}
+              style={{
+                marginLeft: '0.5rem',
+                background: 'rgba(255,255,255,0.2)',
+                border: 'none',
+                color: 'white',
+                padding: '0.25rem 0.5rem',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+            >
+              Retry
+            </button>
+          )}
+        </div>
 
         <div className="crypto-status">
           Encryption: {loadingStates.encryption ? (
@@ -681,6 +736,7 @@ export default function ChatContent() {
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             onKeyDown={handleKeyDown}
+            disabled={connectionState !== 'connected'}
           />
           <button
             type="submit"
@@ -692,6 +748,7 @@ export default function ChatContent() {
               borderRadius: '6px',
               marginTop: '0.5rem',
             }}
+            disabled={connectionState !== 'connected'}
           >
             <FontAwesomeIcon icon={platformMap[selectedPlatform]?.icon || faQuestionCircle} /> Send
           </button>
@@ -935,6 +992,11 @@ export default function ChatContent() {
           font-family: inherit;
         }
         
+        .message-input textarea:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
+        }
+        
         .platform-select {
           margin-bottom: 0.5rem;
         }
@@ -959,8 +1021,13 @@ export default function ChatContent() {
           transition: background 0.3s ease;
         }
         
-        button[type='submit']:hover {
+        button[type='submit']:hover:not(:disabled) {
           filter: brightness(110%);
+        }
+        
+        button[type='submit']:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
         }
         
         .settings-button {
@@ -987,6 +1054,15 @@ export default function ChatContent() {
           align-items: center;
           gap: 0.5rem;
           font-weight: bold;
+        }
+        
+        .encryption-warning button {
+          background: rgba(255,255,255,0.2);
+          border: none;
+          color: white;
+          padding: 0.25rem 0.5rem;
+          border-radius: 4px;
+          cursor: pointer;
         }
         
         .settings-modal {
