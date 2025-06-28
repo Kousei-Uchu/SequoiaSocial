@@ -7,24 +7,24 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 // Correct imports for the icons you're using:
-import { 
-  faDiscord, 
-  faTelegram, 
-  faTwitter, 
-  faWhatsapp, 
-  faFacebookMessenger, 
-  faGoogle, 
-  faApple 
+import {
+  faDiscord,
+  faTelegram,
+  faTwitter,
+  faWhatsapp,
+  faFacebookMessenger,
+  faGoogle,
+  faApple
 } from '@fortawesome/free-brands-svg-icons';
 
-import { 
-  faQuestionCircle, 
-  faLock, 
-  faUnlock, 
-  faCog, 
-  faExclamationTriangle, 
-  faTimes, 
-  faUserShield, 
+import {
+  faQuestionCircle,
+  faLock,
+  faUnlock,
+  faCog,
+  faExclamationTriangle,
+  faTimes,
+  faUserShield,
   faPlus,
   faComment,
   faSms,
@@ -105,21 +105,21 @@ export default function ChatContent() {
   // Handle unknown rooms
   const handleUnknownRoom = useCallback(async (roomId) => {
     if (!matrixClient || roomCacheRef.current.has(roomId)) return;
-    
+
     roomCacheRef.current.add(roomId);
     console.warn(`Attempting to recover unknown room: ${roomId}`);
-    
+
     try {
       let room = matrixClient.getRoom(roomId);
       if (!room) {
         console.log(`Joining room ${roomId}`);
         room = await matrixClient.joinRoom(roomId);
       }
-      
+
       if (room && !rooms.some(r => r.roomId === roomId)) {
         console.log(`Adding room ${roomId} to state`);
         setRooms(prev => [...prev, room]);
-        
+
         if (!activeRoom) {
           setActiveRoom(room);
           setMessages(room.timeline || []);
@@ -133,23 +133,24 @@ export default function ChatContent() {
 
   // Enhanced event handler with room recovery
   const handleNewEvent = useCallback((event, room, toStartOfTimeline) => {
-    if (toStartOfTimeline || !event || event.getType() !== 'm.room.message') return;
-    
-    if (!room && event.getRoomId()) {
-      handleUnknownRoom(event.getRoomId());
-      return;
-    }
+    if (toStartOfTimeline) return;
+    if (!event || event.getType() !== 'm.room.message') return;
 
     setMessages(prev => {
-      if (prev.some(m => m.getId() === event.getId())) return prev;
+      if (prev.some(m => m.getId() === event.getId())) {
+        // console.log('Duplicate event ignored:', event.getId());
+        return prev;
+      }
       return [...prev, event];
     });
 
     if (room?.roomId === activeRoom?.roomId) {
-      detectPlatform([...messages, event]);
+      // Delay detectPlatform to next tick to avoid race with setMessages
+      setTimeout(() => detectPlatform([...messages, event]), 0);
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [activeRoom, messages, handleUnknownRoom]);
+  }, [activeRoom, messages]);
+
 
   // Initialize Matrix client with proxy
   useEffect(() => {
@@ -162,7 +163,7 @@ export default function ChatContent() {
     async function initMatrixClient() {
       try {
         setLoadingStates(prev => ({ ...prev, initial: true }));
-        
+
         const res = await fetch('/api/get-matrix-token');
         if (!res.ok) throw new Error('Not authenticated');
         const { access_token, user_id } = await res.json();
@@ -197,14 +198,14 @@ export default function ChatContent() {
         // Enhanced error handling for sync
         const handleSyncError = (err) => {
           if (unmounted) return;
-          
+
           console.error('Sync error:', err);
           setErrorMsg(`Sync error: ${err.message}`);
-          
+
           if (retryCount < MAX_RETRIES) {
             retryCount++;
             const delay = Math.min(5000 * Math.pow(2, retryCount), 30000); // Exponential backoff
-            console.log(`Retrying sync in ${delay/1000} seconds (attempt ${retryCount}/${MAX_RETRIES})`);
+            console.log(`Retrying sync in ${delay / 1000} seconds (attempt ${retryCount}/${MAX_RETRIES})`);
             syncTimeout = setTimeout(() => {
               if (client && !unmounted) {
                 client.startClient();
@@ -261,7 +262,7 @@ export default function ChatContent() {
         setMatrixClient(client);
         setRooms(dmRooms);
         setContacts(filteredContacts);
-        
+
         if (dmRooms.length > 0) {
           setActiveRoom(dmRooms[0]);
           setMessages(dmRooms[0].timeline || []);
@@ -495,10 +496,10 @@ export default function ChatContent() {
 
       const { room_id } = await matrixClient.createRoom(options);
       console.log('Created DM room:', room_id);
-      
+
       // Add to room cache
       roomCacheRef.current.add(room_id);
-      
+
       // Wait a moment for the room to be available
       setTimeout(() => {
         const room = matrixClient.getRoom(room_id);
@@ -508,7 +509,7 @@ export default function ChatContent() {
           setMessages(room.timeline || []);
         }
       }, 1000);
-      
+
       return room_id;
     } catch (err) {
       console.error('Failed to create DM:', err);
