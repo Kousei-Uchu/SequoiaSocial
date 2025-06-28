@@ -3,14 +3,13 @@
 import { useState } from 'react';
 
 export default function SignupPage() {
-  const [homeserver] = useState('https://matrix.social.sequoiasupport.com');
+  const [homeserver] = useState('https://matrix.social.sequoiasupport.com:8448');
   const [loading, setLoading] = useState(false);
 
   const redirectToGoogle = () => {
     setLoading(true);
     // Redirect URL after login (adjust if needed)
-    const redirectUrl = encodeURIComponent('https://social.sequoiasupport.com/auth/login');
-    window.location.href = `${homeserver}/_matrix/client/r0/login/sso/redirect/google?redirectUrl=${redirectUrl}`;
+    window.location.href = "/api/matrix/login"
   };
 
   return (
