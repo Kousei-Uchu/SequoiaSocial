@@ -192,7 +192,7 @@ export default function ChatContent() {
       try {
         setLoadingStates(prev => ({ ...prev, initial: true }));
         
-        const res = await fetch('/api/get-matrix-token');
+        const res = await fetch('social.sequoiasupport.com/api/get-matrix-token');
         if (!res.ok) throw new Error('Not authenticated');
         const { access_token, user_id } = await res.json();
 
@@ -201,7 +201,7 @@ export default function ChatContent() {
         }
 
         client = sdk.createClient({
-          baseUrl: '/api/matrix', // Use proxy endpoint
+          baseUrl: 'social.sequoiasupport.com/api/matrix', // Use proxy endpoint
           accessToken: access_token,
           userId: user_id,
           timelineSupport: true,
