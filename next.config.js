@@ -12,6 +12,13 @@ const nextConfig = {
         crypto: false
       }
     }
+    
+    // Add this alias
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      'olm': '@matrix-org/olm'
+    }
+    
     return config
   }
 }

@@ -32,7 +32,6 @@ import {
 // FontAwesome configuration
 import { config } from '@fortawesome/fontawesome-svg-core';
 import '@fortawesome/fontawesome-svg-core/styles.css';
-import dynamic from 'next/dynamic';
 config.autoAddCss = false;
 
 const platformMap = {
@@ -66,6 +65,23 @@ const guestAccessOptions = [
   { value: 'forbidden', label: 'Guests Forbidden' },
 ];
 
+// Dynamic OLM loader
+const loadOlm = async () => {
+  if (typeof window !== 'undefined') {
+    try {
+      // Try both package names for compatibility
+      const Olm = await import('@matrix-org/olm').catch(() => import('olm'));
+      await Olm.default.init();
+      window.Olm = Olm.default; // Make available globally
+      return Olm.default;
+    } catch (err) {
+      console.error('OLM initialization failed:', err);
+      return null;
+    }
+  }
+  return null;
+};
+
 export default function ChatContent() {
   const router = useRouter();
   const [matrixClient, setMatrixClient] = useState(null);
@@ -81,6 +97,7 @@ export default function ChatContent() {
     messages: false,
     encryption: false,
     cryptoInit: false,
+    olmReady: false
   });
   const [errorMsg, setErrorMsg] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -101,6 +118,33 @@ export default function ChatContent() {
   const isPaginatingRef = useRef(false);
   const roomCacheRef = useRef(new Set());
   const abortControllerRef = useRef(null);
+
+  // Initialize OLM
+  useEffect(() => {
+    let isMounted = true;
+    
+    async function initializeOlm() {
+      try {
+        const Olm = await loadOlm();
+        if (Olm && isMounted) {
+          setLoadingStates(prev => ({ ...prev, olmReady: true }));
+          console.log('OLM initialized successfully');
+        }
+      } catch (err) {
+        console.error('OLM initialization failed:', err);
+        if (isMounted) {
+          setLoadingStates(prev => ({ ...prev, olmReady: false }));
+          setErrorMsg('Failed to initialize encryption support');
+        }
+      }
+    }
+
+    initializeOlm();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Update room settings when activeRoom or client changes
   useEffect(() => {
@@ -344,38 +388,27 @@ export default function ChatContent() {
     }
   };
 
-  // Proper crypto initialization should look like:
-  // Replace direct OLM import with dynamic import
-  const loadOlm = async () => {
-    if (typeof window !== 'undefined') {
-      const Olm = await import('@matrix-org/olm')
-      await Olm.default.init()
-      return Olm.default
-    }
-    return null
-  }
-
-  // Then modify your initCrypto function:
   async function initCrypto(client) {
     try {
-      const Olm = await loadOlm()
-      if (!Olm) {
-        throw new Error('OLM not available')
+      if (!window.Olm) {
+        throw new Error('OLM not available');
       }
 
-      await client.initCrypto()
+      await client.initCrypto();
       await client.bootstrapCrossSigning({
         authUploadDeviceSigningKeys: async (makeRequest) => makeRequest({})
-      })
-
-      return true
+      });
+      
+      setLoadingStates(prev => ({ ...prev, encryption: true }));
+      return true;
     } catch (err) {
-      console.error('Crypto init failed:', err)
-      return false
+      console.error('Crypto init failed:', err);
+      setLoadingStates(prev => ({ ...prev, encryption: false }));
+      return false;
     }
   }
 
-  // Initialize Matrix client with modern crypto
+  // Initialize Matrix client
   useEffect(() => {
     let unmounted = false;
     let client = null;
@@ -458,6 +491,13 @@ export default function ChatContent() {
           throw new Error('Your browser does not support required encryption features');
         }
 
+        // Wait for OLM to be ready
+        while (!window.Olm && !unmounted) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        if (unmounted) return;
+
         const res = await fetch('/api/get-matrix-token');
         if (!res.ok) throw new Error('Not authenticated');
         const { access_token, user_id } = await res.json();
@@ -469,7 +509,6 @@ export default function ChatContent() {
         // Create new AbortController for this session
         abortControllerRef.current = new AbortController();
 
-        // 1. First create the client without store
         client = sdk.createClient({
           baseUrl: 'https://matrix.social.sequoiasupport.com',
           accessToken: access_token,
@@ -477,7 +516,6 @@ export default function ChatContent() {
           timelineSupport: true,
           useAuthorizationHeader: true,
           lazyLoadMembers: true,
-          // Add this for OLM:
           cryptoStore: new sdk.IndexedDBCryptoStore(
             indexedDB,
             'matrix-js-sdk-crypto-store'
@@ -490,17 +528,14 @@ export default function ChatContent() {
           }
         });
 
-        // 2. Then create and assign the store
+        // Initialize store
         const store = new sdk.IndexedDBStore({
           indexedDB: window.indexedDB,
           localStorage: window.localStorage,
           dbName: 'matrix-js-sdk-store',
         });
-
-        // 3. Assign store to client BEFORE startup
+        
         client.store = store;
-
-        // 4. Now startup the store
         await store.startup();
 
         // Initialize crypto if available
@@ -593,12 +628,6 @@ export default function ChatContent() {
       initMatrixClient();
     }
 
-    useEffect(() => {
-      if (matrixClient && !matrixClient.isCryptoEnabled()) {
-        console.error('Crypto NOT enabled - check initialization');
-      }
-    }, [matrixClient]);
-
     // Network status listener
     const handleOnline = () => {
       if (connectionState === 'disconnected' && !loadingStates.initial) {
@@ -670,15 +699,22 @@ export default function ChatContent() {
 
         <div className="crypto-panel">
           <h4>Encryption Status</h4>
-          {matrixClient?.isCryptoEnabled?.() ? (
-            <div className="crypto-status-good">
-              <FontAwesomeIcon icon={faLock} />
-              End-to-end encryption enabled (OLM)
-            </div>
+          {loadingStates.olmReady ? (
+            matrixClient?.isCryptoEnabled?.() ? (
+              <div className="crypto-status-good">
+                <FontAwesomeIcon icon={faLock} />
+                End-to-end encryption enabled
+              </div>
+            ) : (
+              <div className="crypto-status-bad">
+                <FontAwesomeIcon icon={faUnlock} />
+                Encryption not supported
+              </div>
+            )
           ) : (
-            <div className="crypto-status-bad">
-              <FontAwesomeIcon icon={faUnlock} />
-              Encryption not supported
+            <div className="crypto-status-loading">
+              <FontAwesomeIcon icon={faQuestionCircle} />
+              Initializing encryption...
             </div>
           )}
         </div>
@@ -1007,278 +1043,285 @@ export default function ChatContent() {
           width: 8px;
         }
         
-                  .messages-container::-webkit-scrollbar-thumb {
-            background-color: #555;
-            border-radius: 4px;
-          }
-          
-          .messages-container::-webkit-scrollbar-track {
-            background: transparent;
-          }
-          
-          .message {
-            margin-bottom: 1rem;
-            padding: 0.75rem 1rem;
-            border-radius: 8px;
-            max-width: 80%;
-            word-wrap: break-word;
-            position: relative;
-            animation: fadeIn 0.3s ease;
-          }
-          
-          @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-          }
-          
-          .message-header {
-            display: flex;
-            align-items: center;
-            margin-bottom: 0.5rem;
-            font-size: 0.9rem;
-          }
-          
-          .message-time {
-            margin-left: auto;
-            opacity: 0.7;
-            font-size: 0.8rem;
-          }
-          
-          .message-input {
-            margin-top: 1rem;
-            display: flex;
+        .messages-container::-webkit-scrollbar-thumb {
+          background-color: #555;
+          border-radius: 4px;
+        }
+        
+        .messages-container::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        
+        .message {
+          margin-bottom: 1rem;
+          padding: 0.75rem 1rem;
+          border-radius: 8px;
+          max-width: 80%;
+          word-wrap: break-word;
+          position: relative;
+          animation: fadeIn 0.3s ease;
+        }
+        
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .message-header {
+          display: flex;
+          align-items: center;
+          margin-bottom: 0.5rem;
+          font-size: 0.9rem;
+        }
+        
+        .message-time {
+          margin-left: auto;
+          opacity: 0.7;
+          font-size: 0.8rem;
+        }
+        
+        .message-input {
+          margin-top: 1rem;
+          display: flex;
+          flex-direction: column;
+        }
+        
+        .message-input textarea {
+          width: 100%;
+          min-height: 60px;
+          padding: 0.75rem;
+          border-radius: 8px;
+          border: none;
+          background: #2a2a2a;
+          color: white;
+          resize: vertical;
+          font-size: 1rem;
+        }
+        
+        .message-input button {
+          align-self: flex-end;
+          border: none;
+          cursor: pointer;
+          transition: opacity 0.2s;
+        }
+        
+        .message-input button:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+        
+        .platform-select {
+          margin-bottom: 0.5rem;
+        }
+        
+        .platform-select select {
+          border: none;
+          cursor: pointer;
+        }
+        
+        .new-dm-button {
+          width: 100%;
+          padding: 0.5rem;
+          margin-bottom: 1rem;
+          background: #4caf50;
+          color: white;
+          border: none;
+          border-radius: 6px;
+          cursor: pointer;
+          font-weight: bold;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
+        }
+        
+        .new-dm-button:hover {
+          background: #3e8e41;
+        }
+        
+        .settings-button {
+          background: transparent;
+          border: none;
+          color: #aaa;
+          cursor: pointer;
+          padding: 0.25rem;
+          border-radius: 4px;
+        }
+        
+        .settings-button:hover {
+          color: white;
+          background: #444;
+        }
+        
+        .settings-modal {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0, 0, 0, 0.8);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1000;
+        }
+        
+        .settings-content {
+          background: #1e1e1e;
+          padding: 1.5rem;
+          border-radius: 8px;
+          width: 90%;
+          max-width: 600px;
+          max-height: 90vh;
+          overflow-y: auto;
+          position: relative;
+        }
+        
+        .close-button {
+          position: absolute;
+          top: 1rem;
+          right: 1rem;
+          background: transparent;
+          border: none;
+          color: #aaa;
+          font-size: 1.2rem;
+          cursor: pointer;
+        }
+        
+        .close-button:hover {
+          color: white;
+        }
+        
+        fieldset {
+          border: 1px solid #444;
+          border-radius: 6px;
+          padding: 1rem;
+          margin-bottom: 1rem;
+        }
+        
+        label {
+          display: block;
+          margin-bottom: 1rem;
+        }
+        
+        input[type="text"],
+        textarea,
+        select {
+          width: 100%;
+          padding: 0.5rem;
+          margin-top: 0.25rem;
+          background: #2a2a2a;
+          border: 1px solid #444;
+          border-radius: 4px;
+          color: white;
+        }
+        
+        .power-levels-table {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 1rem 0;
+        }
+        
+        .power-levels-table th,
+        .power-levels-table td {
+          padding: 0.5rem;
+          text-align: left;
+          border-bottom: 1px solid #444;
+        }
+        
+        .power-levels-table input {
+          width: 60px;
+        }
+        
+        .encryption-error,
+        .encryption-warning {
+          padding: 0.75rem;
+          margin-bottom: 1rem;
+          border-radius: 6px;
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        
+        .encryption-error {
+          background: #d32f2f;
+        }
+        
+        .encryption-warning {
+          background: #ff9800;
+          color: #000;
+        }
+        
+        .encryption-warning button {
+          margin-left: 0.5rem;
+          background: rgba(0, 0, 0, 0.2);
+          border: none;
+          padding: 0.25rem 0.5rem;
+          border-radius: 4px;
+          cursor: pointer;
+        }
+        
+        .loading {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          height: 100vh;
+          font-size: 1.2rem;
+        }
+        
+        .error-message {
+          padding: 1rem;
+          background: #d32f2f;
+          border-radius: 6px;
+          margin: 1rem;
+          text-align: center;
+        }
+        
+        .crypto-panel {
+          padding: 0.75rem;
+          margin: 1rem 0;
+          background: #2a2a2a;
+          border-radius: 6px;
+        }
+        
+        .crypto-status-good {
+          color: #4caf50;
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        
+        .crypto-status-bad {
+          color: #f44336;
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        
+        .crypto-status-loading {
+          color: #ff9800;
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        
+        @media (max-width: 768px) {
+          .main-layout {
             flex-direction: column;
+            height: auto;
           }
           
-          .message-input textarea {
+          .channel-list {
             width: 100%;
-            min-height: 60px;
-            padding: 0.75rem;
-            border-radius: 8px;
-            border: none;
-            background: #2a2a2a;
-            color: white;
-            resize: vertical;
-            font-size: 1rem;
+            height: auto;
+            max-height: 300px;
           }
           
-          .message-input button {
-            align-self: flex-end;
-            border: none;
-            cursor: pointer;
-            transition: opacity 0.2s;
+          .message-window {
+            height: 60vh;
           }
-          
-          .message-input button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-          }
-          
-          .platform-select {
-            margin-bottom: 0.5rem;
-          }
-          
-          .platform-select select {
-            border: none;
-            cursor: pointer;
-          }
-          
-          .new-dm-button {
-            width: 100%;
-            padding: 0.5rem;
-            margin-bottom: 1rem;
-            background: #4caf50;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: bold;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.5rem;
-          }
-          
-          .new-dm-button:hover {
-            background: #3e8e41;
-          }
-          
-          .settings-button {
-            background: transparent;
-            border: none;
-            color: #aaa;
-            cursor: pointer;
-            padding: 0.25rem;
-            border-radius: 4px;
-          }
-          
-          .settings-button:hover {
-            color: white;
-            background: #444;
-          }
-          
-          .settings-modal {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.8);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-          }
-          
-          .settings-content {
-            background: #1e1e1e;
-            padding: 1.5rem;
-            border-radius: 8px;
-            width: 90%;
-            max-width: 600px;
-            max-height: 90vh;
-            overflow-y: auto;
-            position: relative;
-          }
-          
-          .close-button {
-            position: absolute;
-            top: 1rem;
-            right: 1rem;
-            background: transparent;
-            border: none;
-            color: #aaa;
-            font-size: 1.2rem;
-            cursor: pointer;
-          }
-          
-          .close-button:hover {
-            color: white;
-          }
-          
-          fieldset {
-            border: 1px solid #444;
-            border-radius: 6px;
-            padding: 1rem;
-            margin-bottom: 1rem;
-          }
-          
-          label {
-            display: block;
-            margin-bottom: 1rem;
-          }
-          
-          input[type="text"],
-          textarea,
-          select {
-            width: 100%;
-            padding: 0.5rem;
-            margin-top: 0.25rem;
-            background: #2a2a2a;
-            border: 1px solid #444;
-            border-radius: 4px;
-            color: white;
-          }
-          
-          .power-levels-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 1rem 0;
-          }
-          
-          .power-levels-table th,
-          .power-levels-table td {
-            padding: 0.5rem;
-            text-align: left;
-            border-bottom: 1px solid #444;
-          }
-          
-          .power-levels-table input {
-            width: 60px;
-          }
-          
-          .encryption-error,
-          .encryption-warning {
-            padding: 0.75rem;
-            margin-bottom: 1rem;
-            border-radius: 6px;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-          }
-          
-          .encryption-error {
-            background: #d32f2f;
-          }
-          
-          .encryption-warning {
-            background: #ff9800;
-            color: #000;
-          }
-          
-          .encryption-warning button {
-            margin-left: 0.5rem;
-            background: rgba(0, 0, 0, 0.2);
-            border: none;
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
-            cursor: pointer;
-          }
-          
-          .loading {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            font-size: 1.2rem;
-          }
-          
-          .error-message {
-            padding: 1rem;
-            background: #d32f2f;
-            border-radius: 6px;
-            margin: 1rem;
-            text-align: center;
-          }
-          
-          .crypto-panel {
-            padding: 0.75rem;
-            margin: 1rem 0;
-            background: #2a2a2a;
-            border-radius: 6px;
-          }
-          
-          .crypto-status-good {
-            color: #4caf50;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-          }
-          
-          .crypto-status-bad {
-            color: #f44336;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-          }
-          
-          @media (max-width: 768px) {
-            .main-layout {
-              flex-direction: column;
-              height: auto;
-            }
-            
-            .channel-list {
-              width: 100%;
-              height: auto;
-              max-height: 300px;
-            }
-            
-            .message-window {
-              height: 60vh;
-            }
-          }
-        `}</style>
+        }
+      `}</style>
     </div>
   );
 }
