@@ -90,43 +90,69 @@ export default function ChatContent() {
   useEffect(() => {
     async function initMatrixClient() {
       try {
-        let accessToken = localStorage.getItem('mx_access_token');
-        let userId = localStorage.getItem('mx_user_id');
-        let homeserver = localStorage.getItem('mx_homeserver') || 'https://matrix.social.sequoiasupport.com';
+        // Fetch access token and user id from your backend API
+        const res = await fetch('/api/get-matrix-token');
+        if (!res.ok) throw new Error('Not authenticated');
 
-        const client = sdk.createClient({ baseUrl: homeserver, accessToken, userId });
-        await client.initCrypto();
-        client.startClient();
+        const { access_token, user_id } = await res.json();
 
-        client.once('sync', (state) => {
-          if (state === 'PREPARED') {
-            const directMap = client.getAccountData('m.direct')?.getContent() || {};
-            const dmRoomIds = new Set(Object.values(directMap).flat());
-            const dmRooms = client.getRooms().filter(r => dmRoomIds.has(r.roomId));
-            
-            const contactLinks = client.getAccountData('com.yourapp.contact_linking')?.getContent()?.contacts || {};
-            const filteredContacts = Object.entries(contactLinks).map(([contactId, data]) => {
-              const roomObjects = {};
-              for (const [platform, roomId] of Object.entries(data.linkedRooms || {})) {
-                const room = client.getRoom(roomId);
-                const members = room?.getJoinedMembers() || [];
-                if (room && members.length === 2 && members.some(m => m.userId === contactId)) {
-                  roomObjects[platform] = room;
-                }
-              }
-              return { contactId, linkedRooms: data.linkedRooms, roomObjects };
-            });
+        if (!access_token || !user_id) {
+          throw new Error('Missing access token or user ID');
+        }
 
-            setRooms(dmRooms);
-            setContacts(filteredContacts);
-            setActiveRoom(dmRooms[0]);
-            setMessages(dmRooms[0]?.timeline || []);
-            detectPlatform(dmRooms[0]?.timeline || []);
-            setMatrixClient(client);
-            setLoading(false);
-          }
+        const homeserver = 'https://matrix.social.sequoiasupport.com';
+
+        // Create Matrix client instance
+        const client = sdk.createClient({
+          baseUrl: homeserver,
+          accessToken: access_token,
+          userId: user_id,
         });
 
+        // Initialize end-to-end encryption if enabled
+        await client.initCrypto();
+
+        // Start syncing
+        client.startClient();
+
+        // Wait until sync is ready
+        await new Promise((resolve) => {
+          client.once('sync', (state) => {
+            if (state === 'PREPARED') {
+              resolve(null);
+            }
+          });
+        });
+
+        // Load direct messages and contacts, etc.
+        const directMap = client.getAccountData('m.direct')?.getContent() || {};
+        const dmRoomIds = new Set(Object.values(directMap).flat());
+        const dmRooms = client.getRooms().filter(r => dmRoomIds.has(r.roomId));
+
+        // Load contact links if you use them (optional)
+        const contactLinks = client.getAccountData('com.sequoiasocial.contact_linking')?.getContent()?.contacts || {};
+        const filteredContacts = Object.entries(contactLinks).map(([contactId, data]) => {
+          const roomObjects = {};
+          for (const [platform, roomId] of Object.entries(data.linkedRooms || {})) {
+            const room = client.getRoom(roomId);
+            const members = room?.getJoinedMembers() || [];
+            if (room && members.length === 2 && members.some(m => m.userId === contactId)) {
+              roomObjects[platform] = room;
+            }
+          }
+          return { contactId, linkedRooms: data.linkedRooms, roomObjects };
+        });
+
+        // Set state accordingly (you'll need setMatrixClient, setRooms, setContacts, etc.)
+        setMatrixClient(client);
+        setRooms(dmRooms);
+        setContacts(filteredContacts);
+        setActiveRoom(dmRooms[0] || null);
+        setMessages(dmRooms[0]?.timeline || []);
+        detectPlatform(dmRooms[0]?.timeline || []);
+        setLoading(false);
+
+        // Add event listener for new messages
         client.on('Room.timeline', (event, room, toStartOfTimeline) => {
           if (toStartOfTimeline) return;
           if (room.roomId === activeRoom?.roomId && event.getType() === 'm.room.message') {
@@ -136,7 +162,7 @@ export default function ChatContent() {
           }
         });
       } catch (err) {
-        console.error('Matrix init error:', err);
+        console.error('Matrix client init failed:', err);
         setErrorMsg('Failed to connect to Matrix.');
         setLoading(false);
       }
@@ -328,7 +354,7 @@ export default function ChatContent() {
         <div className="search-bar">
           <input type="text" placeholder="Search DMs..." />
         </div>
-        
+
         <h4>📩 Direct Messages</h4>
         {rooms.map((room) => {
           const encrypted = isRoomEncrypted(room);
@@ -530,20 +556,20 @@ export default function ChatContent() {
                 <tbody>
                   {powerLevels.users
                     ? Object.entries(powerLevels.users).map(([userId, level]) => (
-                        <tr key={userId}>
-                          <td>{userId}</td>
-                          <td>
-                            <input
-                              type="number"
-                              min="0"
-                              max="100"
-                              value={level}
-                              disabled={userPowerLevel < (powerLevels.events?.['m.room.power_levels'] ?? 50)}
-                              onChange={(e) => updateUserPowerLevel(userId, Number(e.target.value))}
-                            />
-                          </td>
-                        </tr>
-                      ))
+                      <tr key={userId}>
+                        <td>{userId}</td>
+                        <td>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            value={level}
+                            disabled={userPowerLevel < (powerLevels.events?.['m.room.power_levels'] ?? 50)}
+                            onChange={(e) => updateUserPowerLevel(userId, Number(e.target.value))}
+                          />
+                        </td>
+                      </tr>
+                    ))
                     : 'No users found.'}
                 </tbody>
               </table>

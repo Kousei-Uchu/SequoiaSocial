@@ -1,3 +1,4 @@
+import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
 export async function GET(req: Request) {
@@ -26,7 +27,27 @@ export async function GET(req: Request) {
 
   const data = await res.json();
 
-  // 🔐 TODO: Save token to secure cookie, session store, etc.
-  // For now, just redirect with token in URL (not safe for production)
-  return NextResponse.redirect(`/auth/success?access_token=${data.access_token}`);
+  // Save the Matrix access token and user ID to secure HTTP-only cookies
+  const cookieStore = cookies();
+  cookieStore.set({
+    name: 'matrix_token',
+    value: data.access_token,
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    maxAge: 60 * 60 * 24 * 7, // 7 days
+    path: '/',
+  });
+  cookieStore.set({
+    name: 'matrix_user_id',
+    value: data.user_id,
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    maxAge: 60 * 60 * 24 * 7, // 7 days
+    path: '/',
+  });
+
+  // Redirect to your chat UI page
+  return NextResponse.redirect('https://social.sequoiasupport.com/chat');
 }
