@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import sdk from 'matrix-js-sdk';
+import * as sdk from 'matrix-js-sdk';
 import { useRouter } from 'next/navigation';
 import { marked } from 'marked';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
