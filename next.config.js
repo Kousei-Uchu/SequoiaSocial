@@ -1,24 +1,24 @@
-// next.config.js
-module.exports = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
   webpack: (config, { isServer }) => {
+    // WASM support for crypto-js (client-side only)
     if (!isServer) {
-      config.resolve.fallback = {
-        ...config.resolve.fallback,
-        fs: false,
+      config.experiments = {
+        asyncWebAssembly: true,
+        syncWebAssembly: true,
+        layers: true  // Required for Next.js 14+
       };
+      
+      // Ensure .wasm files are treated correctly
+      config.module.rules.push({
+        test: /\.wasm$/,
+        type: 'webassembly/async'
+      });
     }
     return config;
   },
-};
+  // Required for crypto-js
+  transpilePackages: ['@matrix-org/matrix-sdk-crypto-js'],
+}
 
-// Required for WASM crypto
-const withTM = require('next-transpile-modules')([
-  '@matrix-org/matrix-sdk-crypto-js'
-]);
-
-module.exports = withTM({
-  webpack: (config) => {
-    config.experiments = { asyncWebAssembly: true };
-    return config;
-  }
-});
+module.exports = nextConfig
