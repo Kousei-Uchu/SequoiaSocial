@@ -186,11 +186,27 @@ export default function ChatContent() {
         return;
       }
 
+      // Check if room is encrypted and we support encryption
+      const room = matrixClient.getRoom(targetRoomId);
+      if (room?.hasEncryptionStateEvent()) {
+        if (!matrixClient.isCryptoEnabled()) {
+          throw new Error('Cannot send to encrypted room - encryption not supported');
+        }
+        
+        // Ensure encryption is properly set up
+        await matrixClient.prepareToEncrypt(room);
+      }
+
       await matrixClient.sendTextMessage(targetRoomId, newMessage);
       setNewMessage('');
     } catch (err) {
       console.error('Failed to send message:', err);
-      setErrorMsg('Failed to send message.');
+      setErrorMsg(`Failed to send message: ${err.message}`);
+      
+      // If encryption failed, suggest creating a new room
+      if (err.message.includes('encryption')) {
+        setErrorMsg(prev => `${prev} Try creating a new encrypted room.`);
+      }
     }
   };
 
@@ -203,14 +219,12 @@ export default function ChatContent() {
 
   const isRoomEncrypted = (room) => {
     if (!matrixClient || !room) return false;
-    const ev = room.currentState.getStateEvents('m.room.encryption')[0];
-    return !!ev;
+    return room.hasEncryptionStateEvent();
   };
 
   const canUserEnableEncryption = (room) => {
     if (!matrixClient || !room) return false;
     if (!matrixClient.isCryptoEnabled()) {
-      console.warn('Client does not support encryption');
       return false;
     }
 
@@ -288,14 +302,18 @@ export default function ChatContent() {
         is_direct: true,
         invite: [userId],
         visibility: 'private',
-        initial_state: [{
+      };
+
+      // Only add encryption if supported
+      if (matrixClient.isCryptoEnabled()) {
+        options.initial_state = [{
           type: 'm.room.encryption',
           state_key: '',
           content: {
             algorithm: 'm.megolm.v1.aes-sha2',
           },
-        }],
-      };
+        }];
+      }
 
       const { room_id } = await matrixClient.createRoom(options);
       console.log('Created DM room:', room_id);
@@ -324,6 +342,44 @@ export default function ChatContent() {
       createDM(userId);
     }
   };
+
+  async function initCrypto(client) {
+    try {
+      setLoadingStates(prev => ({ ...prev, cryptoInit: true }));
+      
+      // Initialize the Rust crypto module
+      await matrixCrypto.initAsync();
+      
+      // Initialize client crypto with proper config
+      await client.initCrypto({
+        useLivekit: false, // Disable livekit if not needed
+        cryptoCallbacks: {
+          onSecretRequested: (request) => {
+            // Handle secret storage requests
+            return Promise.resolve(null);
+          }
+        }
+      });
+      
+      // Set up cross-signing and device keys
+      await client.bootstrapCrossSigning({
+        authUploadDeviceSigningKeys: async (makeRequest) => {
+          return makeRequest({});
+        }
+      });
+      
+      // Verify our own device
+      await client.checkOwnCrossSigningTrust();
+      
+      setLoadingStates(prev => ({ ...prev, encryption: true, cryptoInit: false }));
+      return true;
+    } catch (err) {
+      console.error('Crypto initialization failed:', err);
+      setErrorMsg(`Encryption setup failed: ${err.message}`);
+      setLoadingStates(prev => ({ ...prev, encryption: false, cryptoInit: false }));
+      return false;
+    }
+  }
 
   // Initialize Matrix client with modern crypto
   useEffect(() => {
@@ -375,33 +431,6 @@ export default function ChatContent() {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }
     };
-
-    async function initCrypto(client) {
-      try {
-        setLoadingStates(prev => ({ ...prev, cryptoInit: true }));
-        
-        // Initialize the Rust crypto module
-        await matrixCrypto.initAsync();
-        
-        // Initialize client crypto
-        await client.initCrypto();
-        
-        // Set up cross-signing and device keys
-        await client.bootstrapCrossSigning({
-          authUploadDeviceSigningKeys: async (makeRequest) => {
-            return makeRequest({});
-          }
-        });
-        
-        setLoadingStates(prev => ({ ...prev, encryption: true, cryptoInit: false }));
-        return true;
-      } catch (err) {
-        console.error('Crypto initialization failed:', err);
-        setErrorMsg(`Encryption setup failed: ${err.message}`);
-        setLoadingStates(prev => ({ ...prev, encryption: false, cryptoInit: false }));
-        return false;
-      }
-    }
 
     const handleSyncError = (err) => {
       if (unmounted) return;
@@ -622,11 +651,18 @@ export default function ChatContent() {
           )}
         </div>
 
-        <div className="crypto-status">
-          Encryption: {loadingStates.encryption ? (
-            <span style={{ color: '#4caf50' }}>Enabled <FontAwesomeIcon icon={faLock} /></span>
+        <div className="crypto-panel">
+          <h4>Encryption Status</h4>
+          {matrixClient?.isCryptoEnabled() ? (
+            <div className="crypto-status-good">
+              <FontAwesomeIcon icon={faLock} />
+              End-to-end encryption enabled
+            </div>
           ) : (
-            <span style={{ color: '#f44336' }}>Disabled <FontAwesomeIcon icon={faUnlock} /></span>
+            <div className="crypto-status-bad">
+              <FontAwesomeIcon icon={faUnlock} />
+              Encryption not supported
+            </div>
           )}
         </div>
 
@@ -680,6 +716,14 @@ export default function ChatContent() {
       </section>
 
       <section className="message-window" ref={messagesContainerRef} onScroll={handleScroll}>
+        {activeRoom?.hasEncryptionStateEvent() && !matrixClient?.isCryptoEnabled() && (
+          <div className="encryption-error">
+            <FontAwesomeIcon icon={faExclamationTriangle} />
+            Warning: This room is encrypted but your client doesn't support encryption.
+            Messages cannot be sent or read.
+          </div>
+        )}
+
         {activeRoom && !isRoomEncrypted(activeRoom) && canUserEnableEncryption(activeRoom) && (
           <div className="encryption-warning">
             <FontAwesomeIcon icon={faExclamationTriangle} /> This room is not encrypted.{' '}
@@ -736,7 +780,7 @@ export default function ChatContent() {
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={connectionState !== 'connected'}
+            disabled={connectionState !== 'connected' || (activeRoom?.hasEncryptionStateEvent() && !matrixClient?.isCryptoEnabled())}
           />
           <button
             type="submit"
@@ -748,7 +792,7 @@ export default function ChatContent() {
               borderRadius: '6px',
               marginTop: '0.5rem',
             }}
-            disabled={connectionState !== 'connected'}
+            disabled={connectionState !== 'connected' || (activeRoom?.hasEncryptionStateEvent() && !matrixClient?.isCryptoEnabled())}
           >
             <FontAwesomeIcon icon={platformMap[selectedPlatform]?.icon || faQuestionCircle} /> Send
           </button>
@@ -1044,6 +1088,18 @@ export default function ChatContent() {
           color: #fff;
         }
         
+        .encryption-error {
+          background: #662222;
+          color: #ffbbbb;
+          padding: 0.75rem;
+          border-radius: 6px;
+          margin: 0.5rem 0;
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          font-weight: bold;
+        }
+        
         .encryption-warning {
           background: #442222;
           color: #fbb;
@@ -1182,12 +1238,30 @@ export default function ChatContent() {
           font-weight: bold;
         }
         
-        .crypto-status {
-          padding: 0.5rem;
+        .crypto-panel {
+          padding: 0.75rem;
           background: #2a2a2a;
-          border-radius: 4px;
-          margin: 0.5rem 0;
-          font-size: 0.9rem;
+          border-radius: 6px;
+          margin: 0.75rem 0;
+        }
+        
+        .crypto-panel h4 {
+          margin-top: 0;
+          margin-bottom: 0.5rem;
+        }
+        
+        .crypto-status-good {
+          color: #4caf50;
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        
+        .crypto-status-bad {
+          color: #f44336;
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
         }
         
         @media (max-width: 768px) {
