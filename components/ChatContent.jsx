@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import * as sdk from 'matrix-js-sdk';
 import { useRouter } from 'next/navigation';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-// Correct imports for the icons you're using:
+// FontAwesome brand icons
 import {
   faDiscord,
   faTelegram,
@@ -14,9 +14,10 @@ import {
   faWhatsapp,
   faFacebookMessenger,
   faGoogle,
-  faApple
+  faApple,
 } from '@fortawesome/free-brands-svg-icons';
 
+// FontAwesome solid icons
 import {
   faQuestionCircle,
   faLock,
@@ -28,14 +29,13 @@ import {
   faPlus,
   faComment,
   faSms,
-  faTrash
+  faTrash,
 } from '@fortawesome/free-solid-svg-icons';
 
-// FontAwesome configuration
+// FontAwesome config
 import { config } from '@fortawesome/fontawesome-svg-core';
 import '@fortawesome/fontawesome-svg-core/styles.css';
 config.autoAddCss = false;
-
 
 const platformMap = {
   discord: { color: 'linear-gradient(135deg, #7289da, #5865f2)', icon: faDiscord },
@@ -70,6 +70,7 @@ const guestAccessOptions = [
 
 export default function ChatContent() {
   const router = useRouter();
+
   const [matrixClient, setMatrixClient] = useState(null);
   const [rooms, setRooms] = useState([]);
   const [contacts, setContacts] = useState([]);
@@ -103,45 +104,40 @@ export default function ChatContent() {
   const isPaginatingRef = useRef(false);
   const roomCacheRef = useRef(new Set());
 
-  // Detect platform from messages
-  const detectPlatform = (msgs) => {
-    const last = [...msgs].reverse().find(e => e.getType() === 'm.room.message');
-    const platform = last?.getSender()?.split(':')[1]?.split('.')[0] || 'unknown';
-    setSelectedPlatform(platformMap[platform] ? platform : 'unknown');
-  };
-
-  // Handlers moved inside useEffect to avoid frequent recreation issues
-
+  // Load Olm once, client-side only
   useEffect(() => {
     async function loadOlm() {
       if (typeof window === 'undefined') return;
       if (window.Olm) return;
 
-      // Load olm.js script
       await new Promise((resolve, reject) => {
         const script = document.createElement('script');
         script.src = '/olm/olm.js';
         script.onload = resolve;
-        script.onerror = reject;
+        script.onerror = () => reject(new Error('Failed to load olm.js'));
         document.body.appendChild(script);
       });
 
-      // Initialize Olm (waits for wasm to load)
       await window.Olm.init();
-
       console.log('Olm loaded and initialized');
     }
 
     loadOlm();
   }, []);
 
-
+  // Main Matrix client setup
   useEffect(() => {
     let unmounted = false;
     let client = null;
     let syncTimeout = null;
     const MAX_RETRIES = 3;
     let retryCount = 0;
+
+    const detectPlatform = (msgs) => {
+      const last = [...msgs].reverse().find(e => e.getType() === 'm.room.message');
+      const platform = last?.getSender()?.split(':')[1]?.split('.')[0] || 'unknown';
+      setSelectedPlatform(platformMap[platform] ? platform : 'unknown');
+    };
 
     const handleUnknownRoom = async (roomId) => {
       if (!client || roomCacheRef.current.has(roomId)) return;
@@ -194,10 +190,21 @@ export default function ChatContent() {
           throw new Error('Missing access token or user ID');
         }
 
-        // Only initialize cryptoStore if indexedDB is available
         const cryptoStore = typeof indexedDB !== 'undefined'
           ? new sdk.IndexedDBCryptoStore(indexedDB, 'matrix-crypto-store')
           : null;
+
+        // Wait for Olm to load & initialize before creating client
+        if (typeof window !== 'undefined' && (!window.Olm || !window.Olm.isReady)) {
+          await new Promise(resolve => {
+            const interval = setInterval(() => {
+              if (window.Olm && window.Olm.isReady) {
+                clearInterval(interval);
+                resolve();
+              }
+            }, 100);
+          });
+        }
 
         client = sdk.createClient({
           baseUrl: 'https://matrix.social.sequoiasupport.com',
@@ -207,15 +214,11 @@ export default function ChatContent() {
           cryptoStore,
           useAuthorizationHeader: true,
           lazyLoadMembers: true,
+          olmVersion: window.Olm, // PASS Olm here!
         });
 
-        // 🔐 Initialize crypto properly
+        // Initialize crypto only after Olm is ready
         try {
-          if (typeof window !== 'undefined' && window.Olm?.init) {
-            await window.Olm.init();
-            console.log('Olm initialized');
-          }
-
           if (cryptoStore && client.initCrypto) {
             await client.initCrypto();
             await client.downloadKeys([user_id], true);
@@ -227,12 +230,11 @@ export default function ChatContent() {
             setLoadingStates(prev => ({ ...prev, encryption: false }));
           }
         } catch (cryptoErr) {
-          console.warn("Crypto initialization failed", cryptoErr);
+          console.warn('Crypto initialization failed', cryptoErr);
           setLoadingStates(prev => ({ ...prev, encryption: false }));
         }
 
-
-        // Handle sync errors with backoff
+        // Sync error handler with backoff
         const handleSyncError = (err) => {
           if (unmounted) return;
           console.error('Sync error:', err);
@@ -240,12 +242,10 @@ export default function ChatContent() {
 
           if (retryCount < MAX_RETRIES) {
             retryCount++;
-            const delay = Math.min(5000 * Math.pow(2, retryCount), 30000);
-            console.log(`Retrying sync in ${delay / 1000} seconds (attempt ${retryCount}/${MAX_RETRIES})`);
+            const delay = Math.min(5000 * 2 ** retryCount, 30000);
+            console.log(`Retrying sync in ${delay / 1000}s (attempt ${retryCount}/${MAX_RETRIES})`);
             syncTimeout = setTimeout(() => {
-              if (client && !unmounted) {
-                client.startClient();
-              }
+              if (client && !unmounted) client.startClient();
             }, delay);
           } else {
             setErrorMsg('Failed to sync after multiple attempts. Please refresh.');
@@ -308,7 +308,6 @@ export default function ChatContent() {
         }
 
         setLoadingStates(prev => ({ ...prev, initial: false }));
-
       } catch (err) {
         console.error('Matrix client init failed:', err);
         if (!unmounted) {
@@ -317,8 +316,6 @@ export default function ChatContent() {
         }
       }
     }
-
-
 
     if (typeof window !== 'undefined') {
       initMatrixClient();
@@ -332,9 +329,9 @@ export default function ChatContent() {
         client.removeAllListeners();
       }
     };
-  }, []); // Run only once
+  }, []);
 
-  // Room settings effect (unchanged, can stay as is)
+  // Update room settings when activeRoom or client changes
   useEffect(() => {
     if (!activeRoom || !matrixClient) return;
 
@@ -378,14 +375,18 @@ export default function ChatContent() {
       .sort((a, b) => a.getTs() - b.getTs());
 
     setMessages(allEvents);
-    detectPlatform(allEvents);
+    const last = allEvents[allEvents.length - 1];
+    const platform = last?.getSender()?.split(':')[1]?.split('.')[0] || 'unknown';
+    setSelectedPlatform(platformMap[platform] ? platform : 'unknown');
   };
 
   const handleRoomSelect = (room) => {
     setActiveRoom(room);
     setActiveContact(null);
     setMessages(room.timeline);
-    detectPlatform(room.timeline);
+    const last = room.timeline[room.timeline.length - 1];
+    const platform = last?.getSender()?.split(':')[1]?.split('.')[0] || 'unknown';
+    setSelectedPlatform(platformMap[platform] ? platform : 'unknown');
   };
 
   const handleScroll = () => {
@@ -516,18 +517,16 @@ export default function ChatContent() {
           type: 'm.room.encryption',
           state_key: '',
           content: {
-            algorithm: 'm.megolm.v1.aes-sha2'
-          }
-        }]
+            algorithm: 'm.megolm.v1.aes-sha2',
+          },
+        }],
       };
 
       const { room_id } = await matrixClient.createRoom(options);
       console.log('Created DM room:', room_id);
 
-      // Add to room cache
       roomCacheRef.current.add(room_id);
 
-      // Wait a moment for the room to be available
       setTimeout(() => {
         const room = matrixClient.getRoom(room_id);
         if (room) {
@@ -545,7 +544,7 @@ export default function ChatContent() {
   };
 
   const promptForDM = () => {
-    const userId = prompt("Enter Matrix User ID (e.g. @user:server.com)");
+    const userId = prompt('Enter Matrix User ID (e.g. @user:server.com)');
     if (userId) {
       createDM(userId);
     }
