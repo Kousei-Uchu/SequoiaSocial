@@ -99,57 +99,91 @@ export default function ChatContent() {
   const roomCacheRef = useRef(new Set());
 
   // Enhanced Olm loading with CDN fallback
+  // Updated Olm loading and initialization code
   useEffect(() => {
     async function loadOlm() {
       if (typeof window === 'undefined') return;
-      if (window.Olm?.isReady) {
+
+      // Skip if already loaded
+      if (window.Olm) {
         console.log('Olm already loaded');
         return;
       }
 
+      console.log('Attempting to load Olm...');
+
       try {
-        console.log('Attempting to load Olm...');
+        // First try loading from local path
         const script = document.createElement('script');
         script.src = '/olm/olm.js';
-        
+
         script.onload = async () => {
           console.log('Olm script loaded, initializing...');
           try {
-            await window.Olm.init();
-            console.log('Olm initialized successfully');
+            // Initialize Olm
+            await new Promise((resolve, reject) => {
+              window.Olm.init().then(() => {
+                console.log('Olm initialized successfully');
+                resolve();
+              }).catch(err => {
+                console.error('Olm initialization failed:', err);
+                reject(err);
+              });
+            });
           } catch (initErr) {
-            console.error('Olm initialization failed:', initErr);
-            throw initErr;
+            console.error('Olm init failed, trying CDN fallback...', initErr);
+            // Fallback to CDN if local initialization fails
+            await loadOlmFromCDN();
           }
         };
 
         script.onerror = async () => {
-          console.warn('Local Olm failed, trying CDN...');
-          const cdnScript = document.createElement('script');
-          cdnScript.src = 'https://unpkg.com/@matrix-org/olm@3.2.4/olm.js';
-          
-          cdnScript.onload = async () => {
-            console.log('CDN Olm loaded, initializing...');
-            await window.Olm.init();
-            console.log('CDN Olm initialized');
-          };
-          
-          cdnScript.onerror = () => {
-            console.error('Failed to load Olm from both sources');
-            setErrorMsg('Failed to load encryption library');
-          };
-          
-          document.body.appendChild(cdnScript);
+          console.warn('Local Olm failed to load, trying CDN...');
+          await loadOlmFromCDN();
         };
 
         document.body.appendChild(script);
       } catch (err) {
         console.error('Olm loading error:', err);
-        setErrorMsg('Encryption setup failed');
+        setErrorMsg('Failed to load encryption library');
       }
     }
 
-    loadOlm();
+    async function loadOlmFromCDN() {
+      try {
+        const cdnScript = document.createElement('script');
+        cdnScript.src = 'https://unpkg.com/@matrix-org/olm@3.2.4/olm.js';
+
+        await new Promise((resolve, reject) => {
+          cdnScript.onload = async () => {
+            console.log('CDN Olm loaded, initializing...');
+            try {
+              await window.Olm.init();
+              console.log('CDN Olm initialized successfully');
+              resolve();
+            } catch (err) {
+              console.error('CDN Olm initialization failed:', err);
+              reject(err);
+            }
+          };
+
+          cdnScript.onerror = () => {
+            console.error('Failed to load Olm from CDN');
+            reject(new Error('Failed to load Olm from CDN'));
+          };
+
+          document.body.appendChild(cdnScript);
+        });
+      } catch (err) {
+        console.error('CDN Olm loading failed:', err);
+        throw err;
+      }
+    }
+
+    loadOlm().catch(err => {
+      console.error('Olm loading failed:', err);
+      setErrorMsg('Encryption setup failed. Please refresh.');
+    });
   }, []);
 
   // Main Matrix client setup with proper crypto handling
@@ -490,7 +524,7 @@ export default function ChatContent() {
       console.warn('Client does not support encryption');
       return false;
     }
-    
+
     const powerLevels = room.currentState.getStateEvents('m.room.power_levels')[0]?.getContent() || {};
     const userPower = powerLevels.users?.[matrixClient.getUserId()] ?? powerLevels.users_default ?? 0;
     const requiredPower = powerLevels.events?.['m.room.encryption'] ?? 50;
