@@ -100,6 +100,7 @@ export default function ChatContent() {
   const messagesContainerRef = useRef(null);
   const isPaginatingRef = useRef(false);
   const roomCacheRef = useRef(new Set());
+  const abortControllerRef = useRef(null);
 
   // Update room settings when activeRoom or client changes
   useEffect(() => {
@@ -188,13 +189,13 @@ export default function ChatContent() {
 
       // Check if room is encrypted and we support encryption
       const room = matrixClient.getRoom(targetRoomId);
-      if (room?.hasEncryptionStateEvent()) {
-        if (!matrixClient.isCryptoEnabled()) {
+      if (room?.hasEncryptionStateEvent?.()) {
+        if (!matrixClient.isCryptoEnabled?.()) {
           throw new Error('Cannot send to encrypted room - encryption not supported');
         }
-        
+
         // Ensure encryption is properly set up
-        await matrixClient.prepareToEncrypt(room);
+        await matrixClient.prepareToEncrypt?.(room);
       }
 
       await matrixClient.sendTextMessage(targetRoomId, newMessage);
@@ -202,7 +203,7 @@ export default function ChatContent() {
     } catch (err) {
       console.error('Failed to send message:', err);
       setErrorMsg(`Failed to send message: ${err.message}`);
-      
+
       // If encryption failed, suggest creating a new room
       if (err.message.includes('encryption')) {
         setErrorMsg(prev => `${prev} Try creating a new encrypted room.`);
@@ -219,12 +220,12 @@ export default function ChatContent() {
 
   const isRoomEncrypted = (room) => {
     if (!matrixClient || !room) return false;
-    return room.hasEncryptionStateEvent();
+    return room.hasEncryptionStateEvent?.();
   };
 
   const canUserEnableEncryption = (room) => {
     if (!matrixClient || !room) return false;
-    if (!matrixClient.isCryptoEnabled()) {
+    if (!matrixClient.isCryptoEnabled?.()) {
       return false;
     }
 
@@ -305,7 +306,7 @@ export default function ChatContent() {
       };
 
       // Only add encryption if supported
-      if (matrixClient.isCryptoEnabled()) {
+      if (matrixClient.isCryptoEnabled?.()) {
         options.initial_state = [{
           type: 'm.room.encryption',
           state_key: '',
@@ -346,10 +347,10 @@ export default function ChatContent() {
   async function initCrypto(client) {
     try {
       setLoadingStates(prev => ({ ...prev, cryptoInit: true }));
-      
+
       // Initialize the Rust crypto module
       await matrixCrypto.initAsync();
-      
+
       // Initialize client crypto with proper config
       await client.initCrypto({
         useLivekit: false, // Disable livekit if not needed
@@ -360,17 +361,17 @@ export default function ChatContent() {
           }
         }
       });
-      
+
       // Set up cross-signing and device keys
       await client.bootstrapCrossSigning({
         authUploadDeviceSigningKeys: async (makeRequest) => {
           return makeRequest({});
         }
       });
-      
+
       // Verify our own device
       await client.checkOwnCrossSigningTrust();
-      
+
       setLoadingStates(prev => ({ ...prev, encryption: true, cryptoInit: false }));
       return true;
     } catch (err) {
@@ -434,14 +435,14 @@ export default function ChatContent() {
 
     const handleSyncError = (err) => {
       if (unmounted) return;
-      
+
       console.error('Sync error:', err);
       setErrorMsg(`Connection issue: ${err.message}`);
       setConnectionState('disconnected');
-      
+
       // Exponential backoff for retries
       const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
-      
+
       if (retryCount < MAX_RETRIES) {
         retryCount++;
         syncTimeout = setTimeout(() => {
@@ -472,6 +473,9 @@ export default function ChatContent() {
           throw new Error('Missing access token or user ID');
         }
 
+        // Create new AbortController for this session
+        abortControllerRef.current = new AbortController();
+
         // 1. First create the client without store
         client = sdk.createClient({
           baseUrl: 'https://matrix.social.sequoiasupport.com',
@@ -480,6 +484,12 @@ export default function ChatContent() {
           timelineSupport: true,
           useAuthorizationHeader: true,
           lazyLoadMembers: true,
+          fetchFn: (url, options) => {
+            return fetch(url, {
+              ...options,
+              signal: abortControllerRef.current?.signal
+            });
+          }
         });
 
         // 2. Then create and assign the store
@@ -488,10 +498,10 @@ export default function ChatContent() {
           localStorage: window.localStorage,
           dbName: 'matrix-js-sdk-store',
         });
-        
+
         // 3. Assign store to client BEFORE startup
         client.store = store;
-        
+
         // 4. Now startup the store
         await store.startup();
 
@@ -598,6 +608,9 @@ export default function ChatContent() {
       unmounted = true;
       window.removeEventListener('online', handleOnline);
       if (syncTimeout) clearTimeout(syncTimeout);
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
       if (client) {
         client.stopClient();
         client.removeAllListeners();
@@ -623,18 +636,18 @@ export default function ChatContent() {
         </button>
 
         <div className="connection-status" style={{
-          backgroundColor: connectionState === 'connected' ? '#4CAF50' : 
-                         connectionState === 'reconnecting' ? '#FFC107' : '#F44336',
+          backgroundColor: connectionState === 'connected' ? '#4CAF50' :
+            connectionState === 'reconnecting' ? '#FFC107' : '#F44336',
           padding: '0.5rem',
           borderRadius: '4px',
           margin: '0.5rem 0',
           textAlign: 'center',
           fontWeight: 'bold'
         }}>
-          {connectionState === 'connected' ? 'Connected' : 
-           connectionState === 'reconnecting' ? 'Reconnecting...' : 'Disconnected'}
+          {connectionState === 'connected' ? 'Connected' :
+            connectionState === 'reconnecting' ? 'Reconnecting...' : 'Disconnected'}
           {connectionState === 'disconnected' && (
-            <button 
+            <button
               onClick={() => initMatrixClient()}
               style={{
                 marginLeft: '0.5rem',
@@ -653,7 +666,7 @@ export default function ChatContent() {
 
         <div className="crypto-panel">
           <h4>Encryption Status</h4>
-          {matrixClient?.isCryptoEnabled() ? (
+          {matrixClient?.isCryptoEnabled?.() ? (
             <div className="crypto-status-good">
               <FontAwesomeIcon icon={faLock} />
               End-to-end encryption enabled
@@ -716,7 +729,7 @@ export default function ChatContent() {
       </section>
 
       <section className="message-window" ref={messagesContainerRef} onScroll={handleScroll}>
-        {activeRoom?.hasEncryptionStateEvent() && !matrixClient?.isCryptoEnabled() && (
+        {activeRoom?.hasEncryptionStateEvent?.() && !matrixClient?.isCryptoEnabled?.() && (
           <div className="encryption-error">
             <FontAwesomeIcon icon={faExclamationTriangle} />
             Warning: This room is encrypted but your client doesn't support encryption.
@@ -780,7 +793,7 @@ export default function ChatContent() {
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={connectionState !== 'connected' || (activeRoom?.hasEncryptionStateEvent() && !matrixClient?.isCryptoEnabled())}
+            disabled={connectionState !== 'connected' || (activeRoom?.hasEncryptionStateEvent?.() && !matrixClient?.isCryptoEnabled?.())}
           />
           <button
             type="submit"
@@ -792,7 +805,7 @@ export default function ChatContent() {
               borderRadius: '6px',
               marginTop: '0.5rem',
             }}
-            disabled={connectionState !== 'connected' || (activeRoom?.hasEncryptionStateEvent() && !matrixClient?.isCryptoEnabled())}
+            disabled={connectionState !== 'connected' || (activeRoom?.hasEncryptionStateEvent?.() && !matrixClient?.isCryptoEnabled?.())}
           >
             <FontAwesomeIcon icon={platformMap[selectedPlatform]?.icon || faQuestionCircle} /> Send
           </button>
@@ -990,296 +1003,278 @@ export default function ChatContent() {
           width: 8px;
         }
         
-        .messages-container::-webkit-scrollbar-thumb {
-          background-color: #555;
-          border-radius: 4px;
-        }
-        
-        .message {
-          margin-bottom: 1rem;
-          border-radius: 0.5rem;
-          padding: 0.75rem;
-          color: white;
-          word-wrap: break-word;
-        }
-        
-        .message-header {
-          font-size: 0.85rem;
-          margin-bottom: 0.25rem;
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-        }
-        
-        .message-time {
-          margin-left: auto;
-          font-size: 0.75rem;
-          opacity: 0.6;
-          user-select: none;
-        }
-        
-        .message-input {
-          margin-top: 1rem;
-          display: flex;
-          flex-direction: column;
-        }
-        
-        .message-input textarea {
-          padding: 0.5rem;
-          border-radius: 6px;
-          background: #2a2a2a;
-          color: white;
-          min-height: 4rem;
-          resize: vertical;
-          border: none;
-          font-size: 1rem;
-          font-family: inherit;
-        }
-        
-        .message-input textarea:disabled {
-          opacity: 0.7;
-          cursor: not-allowed;
-        }
-        
-        .platform-select {
-          margin-bottom: 0.5rem;
-        }
-        
-        .platform-select select {
-          width: 150px;
-          font-weight: bold;
-          border: none;
-          padding: 0.25rem 0.5rem;
-          border-radius: 4px;
-          outline: none;
-          cursor: pointer;
-          color: white;
-          background-image: linear-gradient(135deg, #444, #222);
-          transition: background-image 0.3s ease;
-        }
-        
-        button[type='submit'] {
-          font-weight: bold;
-          border: none;
-          cursor: pointer;
-          transition: background 0.3s ease;
-        }
-        
-        button[type='submit']:hover:not(:disabled) {
-          filter: brightness(110%);
-        }
-        
-        button[type='submit']:disabled {
-          opacity: 0.7;
-          cursor: not-allowed;
-        }
-        
-        .settings-button {
-          background: none;
-          border: none;
-          color: #bbb;
-          cursor: pointer;
-          margin-left: 8px;
-          font-size: 1.1rem;
-          padding: 0 4px;
-        }
-        
-        .settings-button:hover {
-          color: #fff;
-        }
-        
-        .encryption-error {
-          background: #662222;
-          color: #ffbbbb;
-          padding: 0.75rem;
-          border-radius: 6px;
-          margin: 0.5rem 0;
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          font-weight: bold;
-        }
-        
-        .encryption-warning {
-          background: #442222;
-          color: #fbb;
-          padding: 0.5rem;
-          border-radius: 6px;
-          margin-bottom: 0.75rem;
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          font-weight: bold;
-        }
-        
-        .encryption-warning button {
-          background: rgba(255,255,255,0.2);
-          border: none;
-          color: white;
-          padding: 0.25rem 0.5rem;
-          border-radius: 4px;
-          cursor: pointer;
-        }
-        
-        .settings-modal {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background: rgba(0, 0, 0, 0.8);
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          z-index: 1000;
-        }
-        
-        .settings-content {
-          background: #1e1e1e;
-          padding: 2rem;
-          border-radius: 8px;
-          max-width: 600px;
-          width: 100%;
-          max-height: 90vh;
-          overflow-y: auto;
-          position: relative;
-        }
-        
-        .close-button {
-          position: absolute;
-          top: 1rem;
-          right: 1rem;
-          background: none;
-          border: none;
-          color: #bbb;
-          font-size: 1.5rem;
-          cursor: pointer;
-        }
-        
-        .settings-content label {
-          display: block;
-          margin-bottom: 1rem;
-          font-weight: bold;
-          color: white;
-        }
-        
-        .settings-content input[type='text'],
-        .settings-content textarea,
-        .settings-content select {
-          width: 100%;
-          padding: 0.5rem;
-          margin-top: 0.25rem;
-          border-radius: 4px;
-          border: 1px solid #555;
-          background: #2a2a2a;
-          color: white;
-          font-size: 1rem;
-        }
-        
-        .power-levels-table {
-          width: 100%;
-          border-collapse: collapse;
-          margin-bottom: 1rem;
-          color: white;
-        }
-        
-        .power-levels-table th,
-        .power-levels-table td {
-          border: 1px solid #555;
-          padding: 0.5rem;
-          text-align: left;
-        }
-        
-        .power-levels-table input[type='number'] {
-          width: 4rem;
-          background: #444;
-          border: none;
-          border-radius: 3px;
-          color: white;
-          padding: 0.25rem;
-        }
-
-        .new-dm-button {
-          width: 100%;
-          padding: 0.5rem;
-          margin-bottom: 1rem;
-          background: #3a3a3a;
-          color: white;
-          border: none;
-          border-radius: 6px;
-          cursor: pointer;
-          font-weight: bold;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 0.5rem;
-          transition: background 0.3s ease;
-        }
-        
-        .new-dm-button:hover {
-          background: #4a4a4a;
-        }
-        
-        .loading {
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          height: 100vh;
-          font-size: 1.5rem;
-          color: white;
-        }
-        
-        .error-message {
-          padding: 1rem;
-          background: #442222;
-          color: #fbb;
-          border-radius: 6px;
-          margin: 1rem;
-          font-weight: bold;
-        }
-        
-        .crypto-panel {
-          padding: 0.75rem;
-          background: #2a2a2a;
-          border-radius: 6px;
-          margin: 0.75rem 0;
-        }
-        
-        .crypto-panel h4 {
-          margin-top: 0;
-          margin-bottom: 0.5rem;
-        }
-        
-        .crypto-status-good {
-          color: #4caf50;
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-        }
-        
-        .crypto-status-bad {
-          color: #f44336;
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-        }
-        
-        @media (max-width: 768px) {
-          .main-layout {
+                  .messages-container::-webkit-scrollbar-thumb {
+            background-color: #555;
+            border-radius: 4px;
+          }
+          
+          .messages-container::-webkit-scrollbar-track {
+            background: transparent;
+          }
+          
+          .message {
+            margin-bottom: 1rem;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            max-width: 80%;
+            word-wrap: break-word;
+            position: relative;
+            animation: fadeIn 0.3s ease;
+          }
+          
+          @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+          
+          .message-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+          }
+          
+          .message-time {
+            margin-left: auto;
+            opacity: 0.7;
+            font-size: 0.8rem;
+          }
+          
+          .message-input {
+            margin-top: 1rem;
+            display: flex;
             flex-direction: column;
-            height: auto;
           }
           
-          .channel-list {
+          .message-input textarea {
             width: 100%;
-            height: 200px;
+            min-height: 60px;
+            padding: 0.75rem;
+            border-radius: 8px;
+            border: none;
+            background: #2a2a2a;
+            color: white;
+            resize: vertical;
+            font-size: 1rem;
           }
           
-          .message-window {
-            height: calc(100vh - 200px);
+          .message-input button {
+            align-self: flex-end;
+            border: none;
+            cursor: pointer;
+            transition: opacity 0.2s;
           }
-        }
-      `}</style>
+          
+          .message-input button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+          }
+          
+          .platform-select {
+            margin-bottom: 0.5rem;
+          }
+          
+          .platform-select select {
+            border: none;
+            cursor: pointer;
+          }
+          
+          .new-dm-button {
+            width: 100%;
+            padding: 0.5rem;
+            margin-bottom: 1rem;
+            background: #4caf50;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+          }
+          
+          .new-dm-button:hover {
+            background: #3e8e41;
+          }
+          
+          .settings-button {
+            background: transparent;
+            border: none;
+            color: #aaa;
+            cursor: pointer;
+            padding: 0.25rem;
+            border-radius: 4px;
+          }
+          
+          .settings-button:hover {
+            color: white;
+            background: #444;
+          }
+          
+          .settings-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+          }
+          
+          .settings-content {
+            background: #1e1e1e;
+            padding: 1.5rem;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+            position: relative;
+          }
+          
+          .close-button {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: transparent;
+            border: none;
+            color: #aaa;
+            font-size: 1.2rem;
+            cursor: pointer;
+          }
+          
+          .close-button:hover {
+            color: white;
+          }
+          
+          fieldset {
+            border: 1px solid #444;
+            border-radius: 6px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+          }
+          
+          label {
+            display: block;
+            margin-bottom: 1rem;
+          }
+          
+          input[type="text"],
+          textarea,
+          select {
+            width: 100%;
+            padding: 0.5rem;
+            margin-top: 0.25rem;
+            background: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: white;
+          }
+          
+          .power-levels-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+          }
+          
+          .power-levels-table th,
+          .power-levels-table td {
+            padding: 0.5rem;
+            text-align: left;
+            border-bottom: 1px solid #444;
+          }
+          
+          .power-levels-table input {
+            width: 60px;
+          }
+          
+          .encryption-error,
+          .encryption-warning {
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+          }
+          
+          .encryption-error {
+            background: #d32f2f;
+          }
+          
+          .encryption-warning {
+            background: #ff9800;
+            color: #000;
+          }
+          
+          .encryption-warning button {
+            margin-left: 0.5rem;
+            background: rgba(0, 0, 0, 0.2);
+            border: none;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+          }
+          
+          .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            font-size: 1.2rem;
+          }
+          
+          .error-message {
+            padding: 1rem;
+            background: #d32f2f;
+            border-radius: 6px;
+            margin: 1rem;
+            text-align: center;
+          }
+          
+          .crypto-panel {
+            padding: 0.75rem;
+            margin: 1rem 0;
+            background: #2a2a2a;
+            border-radius: 6px;
+          }
+          
+          .crypto-status-good {
+            color: #4caf50;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+          }
+          
+          .crypto-status-bad {
+            color: #f44336;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+          }
+          
+          @media (max-width: 768px) {
+            .main-layout {
+              flex-direction: column;
+              height: auto;
+            }
+            
+            .channel-list {
+              width: 100%;
+              height: auto;
+              max-height: 300px;
+            }
+            
+            .message-window {
+              height: 60vh;
+            }
+          }
+        `}</style>
     </div>
   );
 }
