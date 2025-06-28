@@ -231,6 +231,7 @@ export default function ChatContent() {
           setLoadingStates(prev => ({ ...prev, encryption: false }));
         }
 
+
         // Handle sync errors with backoff
         const handleSyncError = (err) => {
           if (unmounted) return;
