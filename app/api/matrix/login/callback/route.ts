@@ -8,7 +8,7 @@ export async function GET(req: Request) {
     return new NextResponse("Missing loginToken", { status: 400 });
   }
 
-  const homeserver = "https://matrix.social.sequoiasupport.com:8448";
+  const homeserver = "https://matrix.social.sequoiasupport.com";
 
   const res = await fetch(`${homeserver}/_matrix/client/r0/login`, {
     method: 'POST',
