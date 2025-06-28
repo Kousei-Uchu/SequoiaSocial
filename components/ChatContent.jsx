@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useRef } from 'react';
 import * as sdk from 'matrix-js-sdk';
-import Olm from 'olm';
 import { useRouter } from 'next/navigation';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -33,6 +32,7 @@ import {
 // FontAwesome configuration
 import { config } from '@fortawesome/fontawesome-svg-core';
 import '@fortawesome/fontawesome-svg-core/styles.css';
+import dynamic from 'next/dynamic';
 config.autoAddCss = false;
 
 const platformMap = {
@@ -345,23 +345,33 @@ export default function ChatContent() {
   };
 
   // Proper crypto initialization should look like:
+  // Replace direct OLM import with dynamic import
+  const loadOlm = async () => {
+    if (typeof window !== 'undefined') {
+      const Olm = await import('@matrix-org/olm')
+      await Olm.default.init()
+      return Olm.default
+    }
+    return null
+  }
+
+  // Then modify your initCrypto function:
   async function initCrypto(client) {
     try {
-      // Initialize OLM first
-      await Olm.init();
+      const Olm = await loadOlm()
+      if (!Olm) {
+        throw new Error('OLM not available')
+      }
 
-      // Then init client crypto
-      await client.initCrypto();
-
-      // Bootstrap cross-signing
+      await client.initCrypto()
       await client.bootstrapCrossSigning({
         authUploadDeviceSigningKeys: async (makeRequest) => makeRequest({})
-      });
+      })
 
-      return true;
+      return true
     } catch (err) {
-      console.error('Crypto init failed:', err);
-      return false;
+      console.error('Crypto init failed:', err)
+      return false
     }
   }
 
