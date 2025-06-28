@@ -79,18 +79,17 @@ const loadOlm = async () => {
       console.log('Package import failed, trying alternative methods...');
     }
 
-    // Fallback 1: Local public path
-    const localWasmPath = '/olm.wasm';
+    // Fallback 1: Local API endpoint
     try {
-      const response = await fetch(localWasmPath);
-      if (!response.ok) throw new Error('Local WASM not found');
+      const response = await fetch('/api/olm-wasm');
+      if (!response.ok) throw new Error('Local WASM API not found');
       
       const wasmBinary = await response.arrayBuffer();
       const Olm = await import('@matrix-org/olm');
       await Olm.default.init(wasmBinary);
       return Olm.default;
     } catch (localErr) {
-      console.log('Local WASM load failed, trying CDN...');
+      console.log('Local WASM API load failed, trying CDN...');
     }
 
     // Fallback 2: Self-hosted CDN with proper CORS
