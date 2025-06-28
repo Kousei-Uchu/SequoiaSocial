@@ -102,63 +102,60 @@ export default function ChatContent() {
   const isPaginatingRef = useRef(false);
   const roomCacheRef = useRef(new Set());
 
-  // Handle unknown rooms
-  const handleUnknownRoom = useCallback(async (roomId) => {
-    if (!matrixClient || roomCacheRef.current.has(roomId)) return;
+  // Detect platform from messages
+  const detectPlatform = (msgs) => {
+    const last = [...msgs].reverse().find(e => e.getType() === 'm.room.message');
+    const platform = last?.getSender()?.split(':')[1]?.split('.')[0] || 'unknown';
+    setSelectedPlatform(platformMap[platform] ? platform : 'unknown');
+  };
 
-    roomCacheRef.current.add(roomId);
-    console.warn(`Attempting to recover unknown room: ${roomId}`);
+  // Handlers moved inside useEffect to avoid frequent recreation issues
 
-    try {
-      let room = matrixClient.getRoom(roomId);
-      if (!room) {
-        console.log(`Joining room ${roomId}`);
-        room = await matrixClient.joinRoom(roomId);
-      }
-
-      if (room && !rooms.some(r => r.roomId === roomId)) {
-        console.log(`Adding room ${roomId} to state`);
-        setRooms(prev => [...prev, room]);
-
-        if (!activeRoom) {
-          setActiveRoom(room);
-          setMessages(room.timeline || []);
-        }
-      }
-    } catch (err) {
-      console.error(`Failed to handle unknown room ${roomId}:`, err);
-      setRoomJoinError(`Failed to join room ${roomId}: ${err.message}`);
-    }
-  }, [matrixClient, rooms, activeRoom]);
-
-  // Enhanced event handler with room recovery
-  const handleNewEvent = useCallback((event, room, toStartOfTimeline) => {
-    if (toStartOfTimeline) return;
-    if (!event || event.getType() !== 'm.room.message') return;
-
-    setMessages(prev => {
-      if (prev.some(m => m.getId() === event.getId())) {
-        // console.log('Duplicate event ignored:', event.getId());
-        return prev;
-      }
-      return [...prev, event];
-    });
-
-    if (room?.roomId === activeRoom?.roomId) {
-      // Delay detectPlatform to next tick to avoid race with setMessages
-      setTimeout(() => detectPlatform([...messages, event]), 0);
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [activeRoom, messages]);
-
-
-  // Initialize Matrix client with proxy
   useEffect(() => {
     let unmounted = false;
     let client = null;
     let syncTimeout = null;
     const MAX_RETRIES = 3;
     let retryCount = 0;
+
+    const handleUnknownRoom = async (roomId) => {
+      if (!client || roomCacheRef.current.has(roomId)) return;
+      roomCacheRef.current.add(roomId);
+      console.warn(`Attempting to recover unknown room: ${roomId}`);
+      try {
+        let room = client.getRoom(roomId);
+        if (!room) {
+          console.log(`Joining room ${roomId}`);
+          room = await client.joinRoom(roomId);
+        }
+        if (room && !rooms.some(r => r.roomId === roomId)) {
+          console.log(`Adding room ${roomId} to state`);
+          setRooms(prev => [...prev, room]);
+          if (!activeRoom) {
+            setActiveRoom(room);
+            setMessages(room.timeline || []);
+          }
+        }
+      } catch (err) {
+        console.error(`Failed to handle unknown room ${roomId}:`, err);
+        setRoomJoinError(`Failed to join room ${roomId}: ${err.message}`);
+      }
+    };
+
+    const handleNewEvent = (event, room, toStartOfTimeline) => {
+      if (toStartOfTimeline) return;
+      if (!event || event.getType() !== 'm.room.message') return;
+
+      setMessages(prev => {
+        if (prev.some(m => m.getId() === event.getId())) return prev;
+        return [...prev, event];
+      });
+
+      if (room?.roomId === activeRoom?.roomId) {
+        setTimeout(() => detectPlatform([...messages, event]), 0);
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }
+    };
 
     async function initMatrixClient() {
       try {
@@ -173,7 +170,7 @@ export default function ChatContent() {
         }
 
         client = sdk.createClient({
-          baseUrl: 'https://matrix.social.sequoiasupport.com', // Use proxy endpoint
+          baseUrl: 'https://matrix.social.sequoiasupport.com', // Your homeserver URL
           accessToken: access_token,
           userId: user_id,
           timelineSupport: true,
@@ -182,7 +179,6 @@ export default function ChatContent() {
           lazyLoadMembers: true
         });
 
-        // Initialize encryption
         try {
           if (client.initCrypto) {
             await client.initCrypto();
@@ -195,16 +191,14 @@ export default function ChatContent() {
           setLoadingStates(prev => ({ ...prev, encryption: false }));
         }
 
-        // Enhanced error handling for sync
         const handleSyncError = (err) => {
           if (unmounted) return;
-
           console.error('Sync error:', err);
           setErrorMsg(`Sync error: ${err.message}`);
 
           if (retryCount < MAX_RETRIES) {
             retryCount++;
-            const delay = Math.min(5000 * Math.pow(2, retryCount), 30000); // Exponential backoff
+            const delay = Math.min(5000 * Math.pow(2, retryCount), 30000);
             console.log(`Retrying sync in ${delay / 1000} seconds (attempt ${retryCount}/${MAX_RETRIES})`);
             syncTimeout = setTimeout(() => {
               if (client && !unmounted) {
@@ -216,7 +210,6 @@ export default function ChatContent() {
           }
         };
 
-        // Add event listeners
         client.on('sync', (state) => {
           if (state === 'PREPARED') {
             retryCount = 0;
@@ -229,10 +222,15 @@ export default function ChatContent() {
           if (!unmounted) setErrorMsg('Session logged out');
         });
 
-        // Start client
+        client.on('Room.timeline', handleNewEvent);
+        client.on('RoomState.events', (event, state) => {
+          if (!client.getRoom(state.roomId)) {
+            handleUnknownRoom(state.roomId);
+          }
+        });
+
         client.startClient();
 
-        // Wait for first sync
         await new Promise((resolve) => {
           client.once('sync', (state) => {
             if (state === 'PREPARED') resolve(null);
@@ -241,7 +239,6 @@ export default function ChatContent() {
 
         if (unmounted) return;
 
-        // Load rooms and contacts
         const directMap = client.getAccountData('m.direct')?.getContent() || {};
         const dmRoomIds = new Set(Object.values(directMap).flat());
         const dmRooms = client.getRooms().filter(r => dmRoomIds.has(r.roomId));
@@ -269,15 +266,6 @@ export default function ChatContent() {
         }
 
         setLoadingStates(prev => ({ ...prev, initial: false }));
-
-        // Add timeline listener
-        client.on('Room.timeline', handleNewEvent);
-        client.on('RoomState.events', (event, state) => {
-          if (!client.getRoom(state.roomId)) {
-            handleUnknownRoom(state.roomId);
-          }
-        });
-
       } catch (err) {
         console.error('Matrix client init failed:', err);
         if (!unmounted) {
@@ -299,9 +287,9 @@ export default function ChatContent() {
         client.removeAllListeners();
       }
     };
-  }, [router, handleNewEvent, handleUnknownRoom]);
+  }, []); // Run only once
 
-  // Room settings effect
+  // Room settings effect (unchanged, can stay as is)
   useEffect(() => {
     if (!activeRoom || !matrixClient) return;
 
@@ -334,12 +322,6 @@ export default function ChatContent() {
       setUserPowerLevel(0);
     }
   }, [activeRoom, matrixClient]);
-
-  const detectPlatform = (msgs) => {
-    const last = [...msgs].reverse().find(e => e.getType() === 'm.room.message');
-    const platform = last?.getSender()?.split(':')[1]?.split('.')[0] || 'unknown';
-    setSelectedPlatform(platformMap[platform] ? platform : 'unknown');
-  };
 
   const handleContactSelect = (contact) => {
     setActiveContact(contact);
