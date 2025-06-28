@@ -34,7 +34,7 @@ import {
 // FontAwesome configuration
 import { config } from '@fortawesome/fontawesome-svg-core';
 import '@fortawesome/fontawesome-svg-core/styles.css';
-import * as Olm from 'olm';
+import * as Olm from '@matrix-org/olm';
 config.autoAddCss = false;
 
 try {
