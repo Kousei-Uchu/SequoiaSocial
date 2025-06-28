@@ -344,40 +344,29 @@ export default function ChatContent() {
     }
   };
 
+  // Proper crypto initialization should look like:
   async function initCrypto(client) {
     try {
-      setLoadingStates(prev => ({ ...prev, cryptoInit: true }));
-
-      // Initialize the Rust crypto module
+      // 1. Initialize WASM first
       await matrixCrypto.initAsync();
 
-      // Initialize client crypto with proper config
+      // 2. Then init client crypto
       await client.initCrypto({
-        useLivekit: false, // Disable livekit if not needed
+        // Important config:
+        useLivekit: false,
         cryptoCallbacks: {
-          onSecretRequested: (request) => {
-            // Handle secret storage requests
-            return Promise.resolve(null);
-          }
+          onSecretRequested: (request) => Promise.resolve(null)
         }
       });
 
-      // Set up cross-signing and device keys
+      // 3. Bootstrap cross-signing
       await client.bootstrapCrossSigning({
-        authUploadDeviceSigningKeys: async (makeRequest) => {
-          return makeRequest({});
-        }
+        authUploadDeviceSigningKeys: async (makeRequest) => makeRequest({})
       });
 
-      // Verify our own device
-      await client.checkOwnCrossSigningTrust();
-
-      setLoadingStates(prev => ({ ...prev, encryption: true, cryptoInit: false }));
       return true;
     } catch (err) {
-      console.error('Crypto initialization failed:', err);
-      setErrorMsg(`Encryption setup failed: ${err.message}`);
-      setLoadingStates(prev => ({ ...prev, encryption: false, cryptoInit: false }));
+      console.error('Crypto init failed:', err);
       return false;
     }
   }
@@ -594,6 +583,12 @@ export default function ChatContent() {
     if (typeof window !== 'undefined') {
       initMatrixClient();
     }
+
+    useEffect(() => {
+      if (matrixClient && !matrixClient.isCryptoEnabled()) {
+        console.error('Crypto NOT enabled - check initialization');
+      }
+    }, [matrixClient]);
 
     // Network status listener
     const handleOnline = () => {
