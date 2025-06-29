@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "postinstall": "cp node_modules/@matrix-org/olm/olm.wasm public/olm.wasm",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

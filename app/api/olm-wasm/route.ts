@@ -1,24 +1,16 @@
-// app/api/olm-wasm/route.ts
-import { promises as fs } from 'fs';
-import path from 'path';
-import { NextResponse } from 'next/server';
-
-export const dynamic = 'force-static'; // Ensure this route is statically generated
-export const revalidate = 31536000; // Revalidate once a year
+import { readFile } from 'fs/promises';
+import { join } from 'path';
 
 export async function GET() {
+  const wasmPath = join(process.cwd(), 'node_modules/@matrix-org/olm/olm.wasm');
   try {
-    const wasmPath = path.join(process.cwd(), 'node_modules', '@matrix-org', 'olm', 'olm.wasm');
-    const wasmFile = await fs.readFile(wasmPath);
-    
-    return new NextResponse(wasmFile, {
+    const buffer = await readFile(wasmPath);
+    return new Response(buffer, {
       headers: {
-        'Content-Type': 'application/wasm',
-        'Cache-Control': 'public, max-age=31536000, immutable',
-      },
+        'Content-Type': 'application/wasm'
+      }
     });
-  } catch (err) {
-    console.error('Failed to serve WASM file:', err);
-    return new NextResponse(null, { status: 404 });
+  } catch (error) {
+    return new Response('Not found', { status: 404 });
   }
 }

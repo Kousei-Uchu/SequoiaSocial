@@ -36,8 +36,7 @@ config.autoAddCss = false;
 
 import { initMatrixClient } from '../lib/matrixClient';
 
-// Type extensions for Matrix SDK
-// Replace the MatrixClient interface extension with:
+// Extended type definitions for Matrix SDK
 declare module "matrix-js-sdk" {
   interface Room {
     hasEncryptionStateEvent(): boolean;
@@ -45,6 +44,13 @@ declare module "matrix-js-sdk" {
   }
 
   interface MatrixClient {
+    isCryptoEnabled(): boolean;
+    prepareToEncrypt(room: Room): Promise<void>;
+    initCrypto(): Promise<void>;
+    bootstrapCrossSigning(opts: {
+      authUploadDeviceSigningKeys: (makeRequest: (auth: any) => Promise<void>) => Promise<void>;
+    }): Promise<void>;
+    
     on(
       event: 'sync',
       callback: (state: string, prevState: string | null, data?: any) => void
@@ -65,6 +71,25 @@ declare module "matrix-js-sdk" {
       event: 'RoomState.events',
       callback: (event: MatrixEvent, state: RoomState) => void
     ): this;
+  }
+
+  interface StateEvents {
+    'm.room.encryption': any;
+    'm.room.name': any;
+    'm.room.topic': any;
+    'm.room.join_rules': any;
+    'm.room.history_visibility': any;
+    'm.room.guest_access': any;
+    'm.room.power_levels': any;
+  }
+
+  interface AccountDataEvents {
+    'com.sequoiasocial.contact_linking': any;
+    'm.direct': any;
+  }
+
+  enum EventType {
+    Sync = "sync",
   }
 }
 
@@ -165,7 +190,7 @@ export default function ChatContent() {
 
   const canUserEnableEncryption = (room: Room | null) => {
     if (!matrixClient || !room) return false;
-    if (!matrixClient.isCryptoEnabled?.()) {
+    if (!matrixClient.isCryptoEnabled()) {
       return false;
     }
 
@@ -244,9 +269,8 @@ export default function ChatContent() {
       }
 
       const room = matrixClient.getRoom(targetRoomId);
-      // In your message sending logic:
       if (room?.hasEncryptionStateEvent()) {
-        if (!matrixClient.isCryptoEnabled?.()) {
+        if (!matrixClient.isCryptoEnabled()) {
           throw new Error('Cannot send to encrypted room - encryption not supported');
         }
         await matrixClient.prepareToEncrypt(room);
@@ -274,9 +298,13 @@ export default function ChatContent() {
   const enableEncryption = async (room: Room) => {
     if (!matrixClient) return;
     try {
-      await matrixClient.sendStateEvent(room.roomId, 'm.room.encryption', {
-        algorithm: 'm.megolm.v1.aes-sha2',
-      });
+      await matrixClient.sendStateEvent(
+        room.roomId, 
+        'm.room.encryption' as keyof sdk.StateEvents, 
+        {
+          algorithm: 'm.megolm.v1.aes-sha2',
+        }
+      );
       setEncryptionEnabled(true);
       setRooms([...rooms]);
     } catch (err: unknown) {
@@ -291,23 +319,45 @@ export default function ChatContent() {
     setSaving(true);
     try {
       if (roomName) {
-        await matrixClient.sendStateEvent(settingsRoom.roomId, 'm.room.name', { name: roomName });
+        await matrixClient.sendStateEvent(
+          settingsRoom.roomId, 
+          'm.room.name' as keyof sdk.StateEvents, 
+          { name: roomName }
+        );
       }
       if (roomTopic) {
-        await matrixClient.sendStateEvent(settingsRoom.roomId, 'm.room.topic', { topic: roomTopic });
+        await matrixClient.sendStateEvent(
+          settingsRoom.roomId, 
+          'm.room.topic' as keyof sdk.StateEvents, 
+          { topic: roomTopic }
+        );
       }
       if (joinRule) {
-        await matrixClient.sendStateEvent(settingsRoom.roomId, 'm.room.join_rules', { join_rule: joinRule });
+        await matrixClient.sendStateEvent(
+          settingsRoom.roomId, 
+          'm.room.join_rules' as keyof sdk.StateEvents, 
+          { join_rule: joinRule }
+        );
       }
       if (historyVisibility) {
-        await matrixClient.sendStateEvent(settingsRoom.roomId, 'm.room.history_visibility', {
-          history_visibility: historyVisibility,
-        });
+        await matrixClient.sendStateEvent(
+          settingsRoom.roomId, 
+          'm.room.history_visibility' as keyof sdk.StateEvents, 
+          { history_visibility: historyVisibility }
+        );
       }
       if (guestAccess) {
-        await matrixClient.sendStateEvent(settingsRoom.roomId, 'm.room.guest_access', { guest_access: guestAccess });
+        await matrixClient.sendStateEvent(
+          settingsRoom.roomId, 
+          'm.room.guest_access' as keyof sdk.StateEvents, 
+          { guest_access: guestAccess }
+        );
       }
-      await matrixClient.sendStateEvent(settingsRoom.roomId, 'm.room.power_levels', powerLevels);
+      await matrixClient.sendStateEvent(
+        settingsRoom.roomId, 
+        'm.room.power_levels' as keyof sdk.StateEvents, 
+        powerLevels
+      );
 
       alert('Room settings saved!');
       setSettingsOpen(false);
@@ -328,7 +378,7 @@ export default function ChatContent() {
         is_direct: true,
         invite: [userId],
         visibility: 'private' as Visibility,
-        initial_state: matrixClient.isCryptoEnabled?.() ? [{
+        initial_state: matrixClient.isCryptoEnabled() ? [{
           type: 'm.room.encryption',
           state_key: '',
           content: {
@@ -380,11 +430,11 @@ export default function ChatContent() {
     if (!matrixClient) return;
 
     try {
-      const contactData = matrixClient.getAccountData('com.sequoiasocial.contact_linking')?.getContent();
+      const contactData = matrixClient.getAccountData('com.sequoiasocial.contact_linking' as keyof sdk.AccountDataEvents)?.getContent();
       if (!contactData) return;
 
       delete contactData.contacts[contactId];
-      await matrixClient.setAccountData('com.sequoiasocial.contact_linking', contactData);
+      await matrixClient.setAccountData('com.sequoiasocial.contact_linking' as keyof sdk.AccountDataEvents, contactData);
       setContacts((prev) => prev.filter((c) => c.contactId !== contactId));
     } catch (err: unknown) {
       const error = err as Error;
@@ -411,25 +461,25 @@ export default function ChatContent() {
   useEffect(() => {
     if (!activeRoom || !matrixClient) return;
 
-    const nameEv = activeRoom.currentState.getStateEvents('m.room.name')[0];
+    const nameEv = activeRoom.currentState.getStateEvents('m.room.name' as keyof sdk.StateEvents)[0];
     setRoomName(nameEv?.getContent()?.name || '');
 
-    const topicEv = activeRoom.currentState.getStateEvents('m.room.topic')[0];
+    const topicEv = activeRoom.currentState.getStateEvents('m.room.topic' as keyof sdk.StateEvents)[0];
     setRoomTopic(topicEv?.getContent()?.topic || '');
 
-    const joinRulesEv = activeRoom.currentState.getStateEvents('m.room.join_rules')[0];
+    const joinRulesEv = activeRoom.currentState.getStateEvents('m.room.join_rules' as keyof sdk.StateEvents)[0];
     setJoinRule(joinRulesEv?.getContent()?.join_rule || 'invite');
 
-    const historyVisEv = activeRoom.currentState.getStateEvents('m.room.history_visibility')[0];
+    const historyVisEv = activeRoom.currentState.getStateEvents('m.room.history_visibility' as keyof sdk.StateEvents)[0];
     setHistoryVisibility(historyVisEv?.getContent()?.history_visibility || 'shared');
 
-    const guestAccessEv = activeRoom.currentState.getStateEvents('m.room.guest_access')[0];
+    const guestAccessEv = activeRoom.currentState.getStateEvents('m.room.guest_access' as keyof sdk.StateEvents)[0];
     setGuestAccess(guestAccessEv?.getContent()?.guest_access || 'forbidden');
 
-    const encryptionEv = activeRoom.currentState.getStateEvents('m.room.encryption')[0];
+    const encryptionEv = activeRoom.currentState.getStateEvents('m.room.encryption' as keyof sdk.StateEvents)[0];
     setEncryptionEnabled(!!encryptionEv);
 
-    const powerLevelsEv = activeRoom.currentState.getStateEvents('m.room.power_levels')[0];
+    const powerLevelsEv = activeRoom.currentState.getStateEvents('m.room.power_levels' as keyof sdk.StateEvents)[0];
     if (powerLevelsEv) {
       const plContent = powerLevelsEv.getContent();
       setPowerLevels(plContent);
@@ -472,13 +522,12 @@ export default function ChatContent() {
         setMatrixClient(client);
         setLoadingStates((prev) => ({ ...prev, initial: false, olmReady: true }));
 
-        const directMap = client.getAccountData('m.direct')?.getContent() || {};
+        const directMap = client.getAccountData('m.direct' as keyof sdk.AccountDataEvents)?.getContent() || {};
         const dmRoomIds = new Set(Object.values(directMap).flat());
         const dmRooms = client.getRooms().filter((r) => dmRoomIds.has(r.roomId));
         setRooms(dmRooms);
 
-        // In the setupClient function:
-        const contactLinks = client.getAccountData('com.sequoiasocial.contact_linking')?.getContent()?.contacts || {};
+        const contactLinks = client.getAccountData('com.sequoiasocial.contact_linking' as keyof sdk.AccountDataEvents)?.getContent()?.contacts || {};
         const filteredContacts = Object.entries(contactLinks).map(([contactId, data]: [string, any]) => {
           const roomObjects: Record<string, Room> = {};
           for (const [platform, roomId] of Object.entries(data.linkedRooms || {}) as [string, string][]) {
@@ -596,25 +645,24 @@ export default function ChatContent() {
   if (loadingStates.initial) return <div className="loading">Loading chat...</div>;
 
   const MarkdownMessage = ({ content }: { content: string }) => {
-  const [html, setHtml] = useState('');
+    const [html, setHtml] = useState('');
 
-  useEffect(() => {
-    const parseMarkdown = async () => {
-      try {
-        // Use marked.parse (which may be async) to parse the markdown
-        const parsed = await marked.parse(content);
-        setHtml(DOMPurify.sanitize(parsed));
-      } catch (err) {
-        console.error('Error parsing markdown:', err);
-        setHtml(DOMPurify.sanitize(content)); // Fallback to plain text
-      }
-    };
+    useEffect(() => {
+      const parseMarkdown = async () => {
+        try {
+          const parsed = await marked.parse(content);
+          setHtml(DOMPurify.sanitize(parsed));
+        } catch (err) {
+          console.error('Error parsing markdown:', err);
+          setHtml(DOMPurify.sanitize(content));
+        }
+      };
 
-    parseMarkdown();
-  }, [content]);
+      parseMarkdown();
+    }, [content]);
 
-  return <div dangerouslySetInnerHTML={{ __html: html }} />;
-};
+    return <div dangerouslySetInnerHTML={{ __html: html }} />;
+  };
 
   return (
     <div className="main-layout">
@@ -722,7 +770,7 @@ export default function ChatContent() {
       </section>
 
       <section className="message-window" ref={messagesContainerRef} onScroll={handleScroll}>
-        {activeRoom?.hasEncryptionStateEvent?.() && !matrixClient?.isCryptoEnabled?.() && (
+        {activeRoom?.hasEncryptionStateEvent?.() && !matrixClient?.isCryptoEnabled() && (
           <div className="encryption-error">
             <FontAwesomeIcon icon={faExclamationTriangle} />
             Warning: This room is encrypted but your client doesn't support encryption.
@@ -786,7 +834,7 @@ export default function ChatContent() {
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={connectionState !== 'connected' || (activeRoom?.hasEncryptionStateEvent?.() && !matrixClient?.isCryptoEnabled?.())}
+            disabled={connectionState !== 'connected' || (activeRoom?.hasEncryptionStateEvent?.() && !matrixClient?.isCryptoEnabled())}
           />
           <button
             type="submit"
@@ -798,7 +846,7 @@ export default function ChatContent() {
               borderRadius: '6px',
               marginTop: '0.5rem',
             }}
-            disabled={connectionState !== 'connected' || (activeRoom?.hasEncryptionStateEvent?.() && !matrixClient?.isCryptoEnabled?.())}
+            disabled={connectionState !== 'connected' || (activeRoom?.hasEncryptionStateEvent?.() && !matrixClient?.isCryptoEnabled())}
           >
             <FontAwesomeIcon icon={platformMap[selectedPlatform]?.icon || faQuestionCircle} /> Send
           </button>
@@ -1273,7 +1321,6 @@ export default function ChatContent() {
           margin-bottom: 0.25rem;
         }
 
-        /* New styles for connection status */
         .connection-status {
           display: flex;
           align-items: center;
@@ -1327,7 +1374,6 @@ export default function ChatContent() {
           100% { opacity: 1; }
         }
 
-        /* Error and warning banners */
         .error-banner {
           position: fixed;
           top: 0;

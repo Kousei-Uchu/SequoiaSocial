@@ -10,18 +10,34 @@ export async function initMatrixClient(
 ): Promise<MatrixClient> {
   if (matrixClient) return matrixClient;
 
+  // Check browser support
   if (typeof indexedDB === "undefined" || !window.crypto?.subtle) {
     throw new Error("Your browser does not support required encryption features");
   }
 
+  try {
+    // Initialize OLM with WASM
+    const wasmResponse = await fetch('/api/olm-wasm');
+    if (!wasmResponse.ok) {
+      throw new Error('Failed to load OLM WASM file');
+    }
+    const wasmBinary = await wasmResponse.arrayBuffer();
+    await Olm.init({ wasmBinary });
+    console.log("✅ OLM initialized successfully");
+  } catch (err) {
+    console.error("OLM initialization failed:", err);
+    throw new Error("Could not initialize encryption support");
+  }
+
+  // Get authentication tokens
   const res = await fetch("/api/get-matrix-token");
   if (!res.ok) throw new Error("Not authenticated");
-
   const { access_token, user_id, device_id } = await res.json();
-  if (!access_token || !user_id) throw new Error("Missing access token or user ID");
+  if (!access_token || !user_id) {
+    throw new Error("Missing access token or user ID");
+  }
 
-  await Olm.init();
-
+  // Create client instance
   const client = sdk.createClient({
     baseUrl: "https://matrix.social.sequoiasupport.com",
     accessToken: access_token,
@@ -29,7 +45,10 @@ export async function initMatrixClient(
     deviceId: device_id || `web_${Date.now()}`,
     timelineSupport: true,
     useAuthorizationHeader: true,
-    cryptoStore: new sdk.IndexedDBCryptoStore(indexedDB, "matrix-js-sdk-crypto-store"),
+    cryptoStore: new sdk.IndexedDBCryptoStore(
+      indexedDB,
+      "matrix-js-sdk-crypto-store"
+    ),
     store: new sdk.IndexedDBStore({
       indexedDB: window.indexedDB,
       localStorage: window.localStorage,
@@ -37,41 +56,53 @@ export async function initMatrixClient(
     }),
     // @ts-expect-error - not typed but works
     lazyLoadMembers: true,
-    fetchFn: (url, options) =>
-      fetch(url, {
+    fetchFn: (url, options) => {
+      return fetch(url, {
         ...options,
-        signal: abortControllerRef?.signal,
-      }),
+        signal: abortControllerRef?.signal
+      });
+    }
   });
 
+  // Initialize store
   await client.store.startup();
 
-  try {
-    await client.initCrypto();
-    await client.bootstrapCrossSigning({
-      authUploadDeviceSigningKeys: async (makeRequest) => {
-        await makeRequest({});
-      },
-    });
-    console.log("✅ Encryption initialized");
-  } catch (err) {
-    console.warn("⚠️ Failed to initialize encryption:", err);
+  // Initialize crypto if available
+  if (client.initCrypto) {
+    try {
+      await client.initCrypto();
+      await client.bootstrapCrossSigning({
+        authUploadDeviceSigningKeys: async (makeRequest) => {
+          await makeRequest({});
+        },
+      });
+      console.log("✅ Encryption initialized");
+    } catch (err) {
+      console.warn("⚠️ Failed to initialize encryption:", err);
+      // Continue without encryption if it fails
+    }
   }
 
-  // sync listener with safe casting
-  await new Promise<void>((resolve) => {
-    (client as any).once("sync", (state: string) => {
-      if (state === "PREPARED") resolve();
-    });
-  });
+  // Set up sync listener with proper typing
+  await new Promise<void>((resolve, reject) => {
+    const onSync = (state: string, prevState: string | null) => {
+      if (state === "PREPARED") {
+        client.removeListener("sync" as any, onSync);
+        resolve();
+      } else if (state === "ERROR") {
+        client.removeListener("sync" as any, onSync);
+        reject(new Error("Sync failed"));
+      }
+    };
 
-  client.startClient();
+    client.on("sync" as any, onSync);
+    client.startClient();
 
-  // Wait for sync to prepare
-  await new Promise<void>((resolve) => {
-    (client as any).once("sync", (state: string) => {
-      if (state === "PREPARED") resolve();
-    });
+    // Timeout after 30 seconds
+    setTimeout(() => {
+      client.removeListener("sync" as any, onSync);
+      reject(new Error("Sync timed out"));
+    }, 30000);
   });
 
   matrixClient = client;
