@@ -1,5 +1,5 @@
 import * as sdk from "matrix-js-sdk";
-import * as Olm from "olm";
+import * as Olm from "@matrix-org/olm";
 import type { MatrixClient } from "matrix-js-sdk/lib/client";
 
 // Singleton
