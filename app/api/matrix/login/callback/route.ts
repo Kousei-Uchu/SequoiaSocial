@@ -47,6 +47,15 @@ export async function GET(req: Request) {
     maxAge: 60 * 60 * 24 * 7, // 7 days
     path: '/',
   });
+  cookieStore.set({
+    name: 'matrix_device_id',
+    value: data.device_id,
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    maxAge: 60 * 60 * 24 * 7, // 7 days
+    path: '/',
+  });
 
   // Redirect to your chat UI page
   return NextResponse.redirect('https://social.sequoiasupport.com/chat');

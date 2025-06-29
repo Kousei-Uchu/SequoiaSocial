@@ -5,10 +5,11 @@ export async function GET() {
   const cookieStore = cookies();
   const accessToken = cookieStore.get('matrix_token')?.value;
   const userId = cookieStore.get('matrix_user_id')?.value;
+  const deviceId = cookieStore.get('matrix_device_id')?.value;
 
   if (!accessToken || !userId) {
-    return NextResponse.json({ error: 'Missing token or user ID' }, { status: 401 });
+    return NextResponse.json({ error: 'Missing token, device ID, or user ID' }, { status: 401 });
   }
 
-  return NextResponse.json({ access_token: accessToken, user_id: userId });
+  return NextResponse.json({ access_token: accessToken, user_id: userId, device_id: deviceId });
 }

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 
 export default function SignupPage() {
-  const [homeserver] = useState('https://matrix.social.sequoiasupport.com:8448');
+  const [homeserver] = useState('https://matrix.social.sequoiasupport.com');
   const [loading, setLoading] = useState(false);
 
   const redirectToGoogle = () => {
