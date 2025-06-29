@@ -2,35 +2,124 @@
 
 import { useEffect, useState, useRef } from 'react';
 import * as sdk from 'matrix-js-sdk';
+import type { ICreateRoomOpts, Preset, Visibility } from 'matrix-js-sdk/lib/matrix';
+import { MatrixEvent, Room, RoomState } from 'matrix-js-sdk';
 import { useRouter } from 'next/navigation';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import {
+  faDiscord,
+  faTelegram,
+  faTwitter,
+  faWhatsapp,
+  faFacebookMessenger,
+  faGoogle,
+  faApple,
+} from '@fortawesome/free-brands-svg-icons';
+import {
+  faQuestionCircle,
+  faLock,
+  faUnlock,
+  faCog,
+  faExclamationTriangle,
+  faTimes,
+  faUserShield,
+  faPlus,
+  faComment,
+  faSms,
+  faTrash,
+} from '@fortawesome/free-solid-svg-icons';
+import { config } from '@fortawesome/fontawesome-svg-core';
+import '@fortawesome/fontawesome-svg-core/styles.css';
+config.autoAddCss = false;
 
 import { initMatrixClient } from '../lib/matrixClient';
 
-const platformMap = {
-  discord: { color: 'linear-gradient(135deg, #7289da, #5865f2)' },
-  telegram: { color: 'linear-gradient(135deg, #2ca5e0, #0088cc)' },
-  twitter: { color: 'linear-gradient(135deg, #1DA1F2, #0d8ddb)' },
-  whatsapp: { color: 'linear-gradient(135deg, #25d366, #128c7e)' },
-  messenger: { color: 'linear-gradient(135deg, #00b2ff, #006aff)' },
-  google: { color: 'linear-gradient(135deg, #34a853, #4285f4)' },
-  imessage: { color: 'linear-gradient(135deg, #1db954, #007aff)' },
-  sms: { color: 'linear-gradient(135deg, #444, #999)' },
-  unknown: { color: 'linear-gradient(135deg, #888, #555)' },
+// Type extensions for Matrix SDK
+// Replace the MatrixClient interface extension with:
+declare module "matrix-js-sdk" {
+  interface Room {
+    hasEncryptionStateEvent(): boolean;
+    paginate(count: number, backwards?: boolean): Promise<boolean>;
+  }
+
+  interface MatrixClient {
+    on(
+      event: 'sync',
+      callback: (state: string, prevState: string | null, data?: any) => void
+    ): this;
+    on(
+      event: 'sync.error',
+      callback: (err: Error) => void
+    ): this;
+    on(
+      event: 'Session.logged_out',
+      callback: () => void
+    ): this;
+    on(
+      event: 'Room.timeline',
+      callback: (event: MatrixEvent, room: Room, toStartOfTimeline: boolean) => void
+    ): this;
+    on(
+      event: 'RoomState.events',
+      callback: (event: MatrixEvent, state: RoomState) => void
+    ): this;
+  }
+}
+
+interface PlatformInfo {
+  color: string;
+  icon: any;
+}
+
+interface Contact {
+  contactId: string;
+  linkedRooms: Record<string, string>;
+  roomObjects: Record<string, Room>;
+}
+
+const platformMap: Record<string, PlatformInfo> = {
+  discord: { color: 'linear-gradient(135deg, #7289da, #5865f2)', icon: faDiscord },
+  telegram: { color: 'linear-gradient(135deg, #2ca5e0, #0088cc)', icon: faTelegram },
+  twitter: { color: 'linear-gradient(135deg, #1DA1F2, #0d8ddb)', icon: faTwitter },
+  whatsapp: { color: 'linear-gradient(135deg, #25d366, #128c7e)', icon: faWhatsapp },
+  messenger: { color: 'linear-gradient(135deg, #00b2ff, #006aff)', icon: faFacebookMessenger },
+  google: { color: 'linear-gradient(135deg, #34a853, #4285f4)', icon: faGoogle },
+  imessage: { color: 'linear-gradient(135deg, #1db954, #007aff)', icon: faApple },
+  sms: { color: 'linear-gradient(135deg, #444, #999)', icon: faSms },
+  unknown: { color: 'linear-gradient(135deg, #888, #555)', icon: faComment },
 };
+
+const joinRuleOptions = [
+  { value: 'public', label: 'Public' },
+  { value: 'invite', label: 'Invite Only' },
+  { value: 'knock', label: 'Knock' },
+  { value: 'private', label: 'Private' },
+];
+
+const historyVisibilityOptions = [
+  { value: 'world_readable', label: 'World Readable' },
+  { value: 'shared', label: 'Shared' },
+  { value: 'invited', label: 'Invited' },
+  { value: 'joined', label: 'Joined' },
+];
+
+const guestAccessOptions = [
+  { value: 'can_join', label: 'Guests Can Join' },
+  { value: 'forbidden', label: 'Guests Forbidden' },
+];
 
 export default function ChatContent() {
   const router = useRouter();
 
-  // --- State ---
+  // State
   const [matrixClient, setMatrixClient] = useState<sdk.MatrixClient | null>(null);
-  const [rooms, setRooms] = useState<sdk.Room[]>([]);
-  const [contacts, setContacts] = useState<any[]>([]);
-  const [activeRoom, setActiveRoom] = useState<sdk.Room | null>(null);
-  const [activeContact, setActiveContact] = useState<any | null>(null);
-  const [messages, setMessages] = useState<sdk.MatrixEvent[]>([]);
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [activeRoom, setActiveRoom] = useState<Room | null>(null);
+  const [activeContact, setActiveContact] = useState<Contact | null>(null);
+  const [messages, setMessages] = useState<MatrixEvent[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [selectedPlatform, setSelectedPlatform] = useState<string>('unknown');
   const [loadingStates, setLoadingStates] = useState({
@@ -42,7 +131,7 @@ export default function ChatContent() {
   });
   const [errorMsg, setErrorMsg] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsRoom, setSettingsRoom] = useState<sdk.Room | null>(null);
+  const [settingsRoom, setSettingsRoom] = useState<Room | null>(null);
   const [roomJoinError, setRoomJoinError] = useState<string | null>(null);
   const [roomName, setRoomName] = useState('');
   const [roomTopic, setRoomTopic] = useState('');
@@ -55,154 +144,270 @@ export default function ChatContent() {
   const [saving, setSaving] = useState(false);
   const [connectionState, setConnectionState] = useState('disconnected');
 
-  // --- Refs ---
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  // Refs
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const isPaginatingRef = useRef(false);
-  const roomCacheRef = useRef(new Set<string>());
+  const roomCacheRef = useRef<Set<string>>(new Set());
   const abortControllerRef = useRef<AbortController | null>(null);
   const retryCountRef = useRef(0);
 
-  // --- Effects ---
+  // Utility Functions
+  const formatTime = (isoString: string) => {
+    const date = new Date(isoString);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
 
-  // Initialize Matrix client once on mount
-  useEffect(() => {
-    let isMounted = true;
+  const isRoomEncrypted = (room: Room | null) => {
+    if (!matrixClient || !room) return false;
+    return room.hasEncryptionStateEvent();
+  };
 
-    async function setupClient() {
-      try {
-        abortControllerRef.current = new AbortController();
-        const client = await initMatrixClient(abortControllerRef.current);
-        if (!isMounted) return;
-
-        setMatrixClient(client);
-        setLoadingStates((prev) => ({ ...prev, initial: false, olmReady: true }));
-
-        // Load DM rooms and contacts from account data
-        const directMap = client.getAccountData('m.direct')?.getContent() || {};
-        const dmRoomIds = new Set(Object.values(directMap).flat());
-        const dmRooms = client.getRooms().filter((r) => dmRoomIds.has(r.roomId));
-        setRooms(dmRooms);
-
-        const contactLinks =
-          client.getAccountData('com.sequoiasocial.contact_linking')?.getContent()?.contacts || {};
-        const filteredContacts = Object.entries(contactLinks).map(([contactId, data]: any) => {
-          const roomObjects: Record<string, sdk.Room> = {};
-          for (const [platform, roomId] of Object.entries(data.linkedRooms || {})) {
-            const room = client.getRoom(roomId);
-            const members = room?.getJoinedMembers() || [];
-            if (room && members.length === 2 && members.some((m) => m.userId === contactId)) {
-              roomObjects[platform] = room;
-            }
-          }
-          return { contactId, linkedRooms: data.linkedRooms, roomObjects };
-        });
-        setContacts(filteredContacts);
-
-        if (dmRooms.length > 0) {
-          setActiveRoom(dmRooms[0]);
-          setMessages(dmRooms[0].timeline || []);
-        }
-
-        setConnectionState('connected');
-
-        // Setup Matrix event listeners
-
-        client.on('sync', (state) => {
-          if (state === 'PREPARED') {
-            setConnectionState('connected');
-            retryCountRef.current = 0;
-          } else if (state === 'ERROR') {
-            setConnectionState('disconnected');
-          } else if (state === 'RECONNECTING') {
-            setConnectionState('reconnecting');
-          }
-        });
-
-        client.on('sync.error', (err) => {
-          console.error('Sync error:', err);
-          setErrorMsg(`Connection issue: ${err.message}`);
-          setConnectionState('disconnected');
-          // Could add retry logic here if desired
-        });
-
-        client.on('Session.logged_out', () => {
-          if (isMounted) setErrorMsg('Session logged out');
-        });
-
-        client.on('Room.timeline', (event, room, toStartOfTimeline) => {
-          if (toStartOfTimeline) return;
-          if (event.getType() !== 'm.room.message') return;
-
-          setMessages((prev) => {
-            if (prev.some((m) => m.getId() === event.getId())) return prev;
-            return [...prev, event];
-          });
-
-          if (room?.roomId === activeRoom?.roomId) {
-            setTimeout(() => {
-              const last = [...messages, event]
-                .slice()
-                .reverse()
-                .find((e) => e.getType() === 'm.room.message');
-              const platform =
-                last?.getSender()?.split(':')[1]?.split('.')[0] || 'unknown';
-              setSelectedPlatform(platformMap[platform] ? platform : 'unknown');
-            }, 0);
-            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-          }
-        });
-
-        client.on('RoomState.events', async (event, state) => {
-          if (!client.getRoom(state.roomId)) {
-            if (!roomCacheRef.current.has(state.roomId)) {
-              roomCacheRef.current.add(state.roomId);
-              try {
-                let room = client.getRoom(state.roomId);
-                if (!room) {
-                  room = await client.joinRoom(state.roomId);
-                }
-                if (room && !rooms.some((r) => r.roomId === state.roomId)) {
-                  setRooms((prev) => [...prev, room]);
-                  if (!activeRoom) {
-                    setActiveRoom(room);
-                    setMessages(room.timeline || []);
-                  }
-                }
-              } catch (err) {
-                setRoomJoinError(`Failed to join room ${state.roomId}: ${err.message}`);
-              }
-            }
-          }
-        });
-
-        client.startClient();
-      } catch (err: any) {
-        console.error('Failed to initialize Matrix client:', err);
-        if (!isMounted) return;
-
-        setErrorMsg('Failed to initialize Matrix client: ' + err.message);
-        setLoadingStates((prev) => ({ ...prev, initial: false }));
-
-        if (err.message.includes('authenticated')) {
-          router.push('/login');
-        }
-      }
+  const canUserEnableEncryption = (room: Room | null) => {
+    if (!matrixClient || !room) return false;
+    if (!matrixClient.isCryptoEnabled?.()) {
+      return false;
     }
 
-    setupClient();
+    const powerLevels = room.currentState.getStateEvents('m.room.power_levels')[0]?.getContent() || {};
+    const userId = matrixClient.getUserId();
+    const userPower = userId ? powerLevels.users?.[userId] ?? powerLevels.users_default ?? 0 : 0;
+    const requiredPower = powerLevels.events?.['m.room.encryption'] ?? 50;
+    return userPower >= requiredPower && !isRoomEncrypted(room);
+  };
 
-    return () => {
-      isMounted = false;
-      if (abortControllerRef.current) abortControllerRef.current.abort();
-      if (matrixClient) {
-        matrixClient.stopClient();
-        matrixClient.removeAllListeners();
+  const updateUserPowerLevel = (userId: string, newLevel: number) => {
+    setPowerLevels((prev) => {
+      const users = { ...(prev.users || {}) };
+      users[userId] = newLevel;
+      return { ...prev, users };
+    });
+  };
+
+  // Event Handlers
+  const handleContactSelect = (contact: Contact) => {
+    setActiveContact(contact);
+    setActiveRoom(null);
+
+    const allEvents = Object.values(contact.roomObjects)
+      .flatMap((room: Room) => room.timeline || [])
+      .filter((ev: MatrixEvent) => ev.getType() === 'm.room.message')
+      .sort((a: MatrixEvent, b: MatrixEvent) => a.getTs() - b.getTs());
+
+    setMessages(allEvents);
+    const last = allEvents[allEvents.length - 1];
+    const platform = last?.getSender()?.split(':')[1]?.split('.')[0] || 'unknown';
+    setSelectedPlatform(platformMap[platform] ? platform : 'unknown');
+  };
+
+  const handleRoomSelect = (room: Room) => {
+    setActiveRoom(room);
+    setActiveContact(null);
+    setMessages(room.timeline);
+    const last = room.timeline[room.timeline.length - 1];
+    const platform = last?.getSender()?.split(':')[1]?.split('.')[0] || 'unknown';
+    setSelectedPlatform(platformMap[platform] ? platform : 'unknown');
+  };
+
+  const handleScroll = () => {
+    const container = messagesContainerRef.current;
+    if (!container || !activeRoom || isPaginatingRef.current) return;
+
+    if (container.scrollTop < 100) {
+      isPaginatingRef.current = true;
+      activeRoom.paginate(20, true)
+        .then(() => {
+          setMessages([...activeRoom.timeline]);
+        })
+        .finally(() => {
+          isPaginatingRef.current = false;
+        });
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !matrixClient) return;
+
+    try {
+      let targetRoomId: string | undefined;
+      if (activeRoom) {
+        targetRoomId = activeRoom.roomId;
+      } else if (activeContact) {
+        targetRoomId = activeContact.linkedRooms[selectedPlatform];
+      } else {
+        return;
       }
-    };
-  }, [router]);
 
-  // Update room settings state when activeRoom or client changes
+      if (!targetRoomId) {
+        throw new Error('No target room specified');
+      }
+
+      const room = matrixClient.getRoom(targetRoomId);
+      // In your message sending logic:
+      if (room?.hasEncryptionStateEvent()) {
+        if (!matrixClient.isCryptoEnabled?.()) {
+          throw new Error('Cannot send to encrypted room - encryption not supported');
+        }
+        await matrixClient.prepareToEncrypt(room);
+      }
+
+      await matrixClient.sendTextMessage(targetRoomId, newMessage);
+      setNewMessage('');
+    } catch (err: unknown) {
+      const error = err as Error;
+      console.error('Failed to send message:', error);
+      setErrorMsg(`Failed to send message: ${error.message}`);
+      if (error.message.includes('encryption')) {
+        setErrorMsg(prev => `${prev} Try creating a new encrypted room.`);
+      }
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e);
+    }
+  };
+
+  const enableEncryption = async (room: Room) => {
+    if (!matrixClient) return;
+    try {
+      await matrixClient.sendStateEvent(room.roomId, 'm.room.encryption', {
+        algorithm: 'm.megolm.v1.aes-sha2',
+      });
+      setEncryptionEnabled(true);
+      setRooms([...rooms]);
+    } catch (err: unknown) {
+      const error = err as Error;
+      console.error('Failed to enable encryption:', error);
+      alert('Failed to enable encryption: ' + error.message);
+    }
+  };
+
+  const saveRoomSettings = async () => {
+    if (!matrixClient || !settingsRoom) return;
+    setSaving(true);
+    try {
+      if (roomName) {
+        await matrixClient.sendStateEvent(settingsRoom.roomId, 'm.room.name', { name: roomName });
+      }
+      if (roomTopic) {
+        await matrixClient.sendStateEvent(settingsRoom.roomId, 'm.room.topic', { topic: roomTopic });
+      }
+      if (joinRule) {
+        await matrixClient.sendStateEvent(settingsRoom.roomId, 'm.room.join_rules', { join_rule: joinRule });
+      }
+      if (historyVisibility) {
+        await matrixClient.sendStateEvent(settingsRoom.roomId, 'm.room.history_visibility', {
+          history_visibility: historyVisibility,
+        });
+      }
+      if (guestAccess) {
+        await matrixClient.sendStateEvent(settingsRoom.roomId, 'm.room.guest_access', { guest_access: guestAccess });
+      }
+      await matrixClient.sendStateEvent(settingsRoom.roomId, 'm.room.power_levels', powerLevels);
+
+      alert('Room settings saved!');
+      setSettingsOpen(false);
+    } catch (err: unknown) {
+      const error = err as Error;
+      console.error('Failed to save room settings:', error);
+      alert('Failed to save settings: ' + error.message);
+    }
+    setSaving(false);
+  };
+
+  const createDMRoom = async (userId: string) => {
+    if (!matrixClient) return;
+
+    try {
+      const options: ICreateRoomOpts = {
+        preset: 'trusted_private_chat' as Preset,
+        is_direct: true,
+        invite: [userId],
+        visibility: 'private' as Visibility,
+        initial_state: matrixClient.isCryptoEnabled?.() ? [{
+          type: 'm.room.encryption',
+          state_key: '',
+          content: {
+            algorithm: 'm.megolm.v1.aes-sha2',
+          },
+        }] : undefined
+      };
+
+      const { room_id } = await matrixClient.createRoom(options);
+      console.log('Created DM room:', room_id);
+
+      roomCacheRef.current.add(room_id);
+
+      setTimeout(() => {
+        const room = matrixClient.getRoom(room_id);
+        if (room) {
+          setRooms(prev => [...prev, room]);
+          setActiveRoom(room);
+          setMessages(room.timeline || []);
+        }
+      }, 1000);
+
+      return room_id;
+    } catch (err: unknown) {
+      const error = err as Error;
+      console.error('Failed to create DM:', error);
+      setErrorMsg('Failed to create DM: ' + error.message);
+    }
+  };
+
+  const promptForDM = () => {
+    const userId = prompt('Enter Matrix User ID (e.g. @user:server.com)');
+    if (userId) {
+      createDMRoom(userId);
+    }
+  };
+
+  const openSettings = (room: Room) => {
+    setSettingsRoom(room);
+    setSettingsOpen(true);
+  };
+
+  const closeSettings = () => {
+    setSettingsOpen(false);
+    setSettingsRoom(null);
+  };
+
+  const removeContact = async (contactId: string) => {
+    if (!matrixClient) return;
+
+    try {
+      const contactData = matrixClient.getAccountData('com.sequoiasocial.contact_linking')?.getContent();
+      if (!contactData) return;
+
+      delete contactData.contacts[contactId];
+      await matrixClient.setAccountData('com.sequoiasocial.contact_linking', contactData);
+      setContacts((prev) => prev.filter((c) => c.contactId !== contactId));
+    } catch (err: unknown) {
+      const error = err as Error;
+      setErrorMsg('Failed to remove contact: ' + error.message);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (!matrixClient) return;
+    try {
+      await matrixClient.logout();
+      router.push('/login');
+    } catch (err: unknown) {
+      const error = err as Error;
+      setErrorMsg('Failed to logout: ' + error.message);
+    }
+  };
+
+  // Effects
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
   useEffect(() => {
     if (!activeRoom || !matrixClient) return;
 
@@ -228,10 +433,8 @@ export default function ChatContent() {
     if (powerLevelsEv) {
       const plContent = powerLevelsEv.getContent();
       setPowerLevels(plContent);
-      const userPL =
-        plContent.users?.[matrixClient.getUserId()] ??
-        plContent.users_default ??
-        0;
+      const userId = matrixClient.getUserId();
+      const userPL = userId ? plContent.users?.[userId] ?? plContent.users_default ?? 0 : 0;
       setUserPowerLevel(userPL);
     } else {
       setPowerLevels({});
@@ -239,206 +442,179 @@ export default function ChatContent() {
     }
   }, [activeRoom, matrixClient]);
 
-  // --- Handlers ---
-
-  // Select a contact: update active contact, reset room, show combined messages from linked rooms
-  const handleContactSelect = (contact: any) => {
-    setActiveContact(contact);
-    setActiveRoom(null);
-
-    const allEvents = Object.values(contact.roomObjects)
-      .flatMap((room: sdk.Room) => room.timeline || [])
-      .filter((ev: sdk.MatrixEvent) => ev.getType() === 'm.room.message')
-      .sort((a: sdk.MatrixEvent, b: sdk.MatrixEvent) => a.getTs() - b.getTs());
-
-    setMessages(allEvents);
-    const last = allEvents[allEvents.length - 1];
-    const platform =
-      last?.getSender()?.split(':')[1]?.split('.')[0] || 'unknown';
-    setSelectedPlatform(platformMap[platform] ? platform : 'unknown');
-  };
-
-  // Select a room: update active room and reset active contact, set messages and platform
-  const handleRoomSelect = (room: sdk.Room) => {
-    setActiveRoom(room);
-    setActiveContact(null);
-    setMessages(room.timeline);
-    const last = room.timeline[room.timeline.length - 1];
-    const platform =
-      last?.getSender()?.split(':')[1]?.split('.')[0] || 'unknown';
-    setSelectedPlatform(platformMap[platform] ? platform : 'unknown');
-  };
-
-  // Scroll handler for pagination on scroll up near top
-  const handleScroll = () => {
-    const container = messagesContainerRef.current;
-    if (!container || !activeRoom || isPaginatingRef.current) return;
-
-    if (container.scrollTop < 100) {
-      isPaginatingRef.current = true;
-      activeRoom
-        .paginate(20, true)
-        .then(() => {
-          setMessages([...activeRoom.timeline]);
-        })
-        .finally(() => {
-          isPaginatingRef.current = false;
-        });
-    }
-  };
-
-  // Send message handler
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMessage.trim() || !matrixClient) return;
-
-    try {
-      let targetRoomId: string | undefined;
-      if (activeRoom) {
-        targetRoomId = activeRoom.roomId;
-      } else if (activeContact) {
-        targetRoomId = activeContact.linkedRooms[selectedPlatform];
-      } else {
-        return;
+  useEffect(() => {
+    const handleOnline = () => {
+      if (connectionState === 'disconnected' && !loadingStates.initial) {
+        initMatrixClient(abortControllerRef.current ?? undefined)
+          .then(client => {
+            setMatrixClient(client);
+            setConnectionState('connected');
+          })
+          .catch(err => {
+            console.error('Reconnection failed:', err);
+          });
       }
+    };
 
-      const room = matrixClient.getRoom(targetRoomId);
-      if (room?.hasEncryptionStateEvent?.()) {
-        if (!matrixClient.isCryptoEnabled?.()) {
-          throw new Error('Encryption is not enabled.');
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [connectionState, loadingStates.initial]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function setupClient() {
+      try {
+        abortControllerRef.current = new AbortController();
+        const client = await initMatrixClient(abortControllerRef.current);
+        if (!isMounted) return;
+
+        setMatrixClient(client);
+        setLoadingStates((prev) => ({ ...prev, initial: false, olmReady: true }));
+
+        const directMap = client.getAccountData('m.direct')?.getContent() || {};
+        const dmRoomIds = new Set(Object.values(directMap).flat());
+        const dmRooms = client.getRooms().filter((r) => dmRoomIds.has(r.roomId));
+        setRooms(dmRooms);
+
+        // In the setupClient function:
+        const contactLinks = client.getAccountData('com.sequoiasocial.contact_linking')?.getContent()?.contacts || {};
+        const filteredContacts = Object.entries(contactLinks).map(([contactId, data]: [string, any]) => {
+          const roomObjects: Record<string, Room> = {};
+          for (const [platform, roomId] of Object.entries(data.linkedRooms || {}) as [string, string][]) {
+            const room = client.getRoom(roomId);
+            const members = room?.getJoinedMembers() || [];
+            if (room && members.length === 2 && members.some((m) => m.userId === contactId)) {
+              roomObjects[platform] = room;
+            }
+          }
+          return { contactId, linkedRooms: data.linkedRooms, roomObjects };
+        });
+        setContacts(filteredContacts);
+
+        if (dmRooms.length > 0) {
+          setActiveRoom(dmRooms[0]);
+          setMessages(dmRooms[0].timeline || []);
+        }
+
+        setConnectionState('connected');
+
+        client.on('sync', (state) => {
+          if (state === 'PREPARED') {
+            setConnectionState('connected');
+            retryCountRef.current = 0;
+          } else if (state === 'ERROR') {
+            setConnectionState('disconnected');
+          } else if (state === 'RECONNECTING') {
+            setConnectionState('reconnecting');
+          }
+        });
+
+        client.on('sync.error', (err) => {
+          console.error('Sync error:', err);
+          setErrorMsg(`Connection issue: ${err.message}`);
+          setConnectionState('disconnected');
+        });
+
+        client.on('Session.logged_out', () => {
+          if (isMounted) setErrorMsg('Session logged out');
+        });
+
+        client.on('Room.timeline', (event, room, toStartOfTimeline) => {
+          if (toStartOfTimeline) return;
+          if (event.getType() !== 'm.room.message') return;
+
+          setMessages((prev) => {
+            if (prev.some((m) => m.getId() === event.getId())) return prev;
+            return [...prev, event];
+          });
+
+          if (room?.roomId === activeRoom?.roomId) {
+            setTimeout(() => {
+              const last = [...messages, event]
+                .slice()
+                .reverse()
+                .find((e) => e.getType() === 'm.room.message');
+              const platform = last?.getSender()?.split(':')[1]?.split('.')[0] || 'unknown';
+              setSelectedPlatform(platformMap[platform] ? platform : 'unknown');
+            }, 0);
+            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+          }
+        });
+
+        client.on('RoomState.events', async (event, state) => {
+          if (!client.getRoom(state.roomId)) {
+            if (!roomCacheRef.current.has(state.roomId)) {
+              roomCacheRef.current.add(state.roomId);
+              try {
+                let room = client.getRoom(state.roomId);
+                if (!room) {
+                  room = await client.joinRoom(state.roomId);
+                }
+                if (room && !rooms.some((r) => r.roomId === state.roomId)) {
+                  setRooms((prev) => [...prev, room]);
+                  if (!activeRoom) {
+                    setActiveRoom(room);
+                    setMessages(room.timeline || []);
+                  }
+                }
+              } catch (err) {
+                const error = err as Error;
+                setRoomJoinError(`Failed to join room ${state.roomId}: ${error.message}`);
+              }
+            }
+          }
+        });
+
+        client.startClient();
+      } catch (err: unknown) {
+        const error = err as Error;
+        console.error('Failed to initialize Matrix client:', error);
+        if (!isMounted) return;
+
+        setErrorMsg('Failed to initialize Matrix client: ' + error.message);
+        setLoadingStates((prev) => ({ ...prev, initial: false }));
+
+        if (error.message.includes('authenticated')) {
+          router.push('/login');
         }
       }
-
-      await matrixClient.sendTextMessage(targetRoomId, newMessage.trim());
-      setNewMessage('');
-    } catch (err: any) {
-      setErrorMsg('Failed to send message: ' + err.message);
     }
-  };
 
-  // Enable encryption for current room
-  const enableEncryption = async () => {
-    if (!activeRoom || !matrixClient) return;
-    setLoadingStates((prev) => ({ ...prev, encryption: true }));
+    setupClient();
 
-    try {
-      await matrixClient.sendStateEvent(
-        activeRoom.roomId,
-        'm.room.encryption',
-        { algorithm: 'm.megolm.v1.aes-sha2' },
-        '',
-      );
-      setEncryptionEnabled(true);
-    } catch (err: any) {
-      setErrorMsg('Failed to enable encryption: ' + err.message);
-    } finally {
-      setLoadingStates((prev) => ({ ...prev, encryption: false }));
-    }
-  };
-
-  // Save room settings: name, topic, join rules, history visibility, guest access
-  const saveRoomSettings = async () => {
-    if (!activeRoom || !matrixClient) return;
-
-    setSaving(true);
-    try {
-      await matrixClient.sendStateEvent(
-        activeRoom.roomId,
-        'm.room.name',
-        { name: roomName },
-        '',
-      );
-      await matrixClient.sendStateEvent(
-        activeRoom.roomId,
-        'm.room.topic',
-        { topic: roomTopic },
-        '',
-      );
-      await matrixClient.sendStateEvent(
-        activeRoom.roomId,
-        'm.room.join_rules',
-        { join_rule: joinRule },
-        '',
-      );
-      await matrixClient.sendStateEvent(
-        activeRoom.roomId,
-        'm.room.history_visibility',
-        { history_visibility: historyVisibility },
-        '',
-      );
-      await matrixClient.sendStateEvent(
-        activeRoom.roomId,
-        'm.room.guest_access',
-        { guest_access: guestAccess },
-        '',
-      );
-    } catch (err: any) {
-      setErrorMsg('Failed to save room settings: ' + err.message);
-    } finally {
-      setSaving(false);
-      setSettingsOpen(false);
-    }
-  };
-
-  // Create a new DM room with a userId
-  const createDMRoom = async (userId: string) => {
-    if (!matrixClient) return;
-
-    try {
-      const roomId = await matrixClient.createRoom({
-        invite: [userId],
-        is_direct: true,
-      });
-
-      const newRoom = matrixClient.getRoom(roomId);
-      if (newRoom) {
-        setRooms((prev) => [...prev, newRoom]);
-        setActiveRoom(newRoom);
-        setMessages(newRoom.timeline);
+    return () => {
+      isMounted = false;
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+      if (matrixClient) {
+        matrixClient.stopClient();
+        matrixClient.removeAllListeners();
       }
-    } catch (err: any) {
-      setErrorMsg('Failed to create DM room: ' + err.message);
-    }
-  };
+    };
+  }, [router]);
 
-  // Remove contact handler
-  const removeContact = async (contactId: string) => {
-    if (!matrixClient) return;
+  if (loadingStates.initial) return <div className="loading">Loading chat...</div>;
 
-    try {
-      // Example: update the account data to remove the contact
-      const contactData = matrixClient.getAccountData('com.sequoiasocial.contact_linking')?.getContent();
-      if (!contactData) return;
+  const MarkdownMessage = ({ content }: { content: string }) => {
+  const [html, setHtml] = useState('');
 
-      delete contactData.contacts[contactId];
-      await matrixClient.setAccountData('com.sequoiasocial.contact_linking', contactData);
-      setContacts((prev) => prev.filter((c) => c.contactId !== contactId));
-    } catch (err: any) {
-      setErrorMsg('Failed to remove contact: ' + err.message);
-    }
-  };
-
-  // Logout handler
-  const handleLogout = async () => {
-    if (!matrixClient) return;
-    try {
-      await matrixClient.logout();
-      router.push('/login');
-    } catch (err: any) {
-      setErrorMsg('Failed to logout: ' + err.message);
-    }
-  };
-
-  // Utility: sanitize and render markdown to HTML
-  const renderMarkdown = (text: string) => {
-    const raw = marked(text);
-    return DOMPurify.sanitize(raw);
-  };
-
-  // Scroll messages to bottom when messages change
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    const parseMarkdown = async () => {
+      try {
+        // Use marked.parse (which may be async) to parse the markdown
+        const parsed = await marked.parse(content);
+        setHtml(DOMPurify.sanitize(parsed));
+      } catch (err) {
+        console.error('Error parsing markdown:', err);
+        setHtml(DOMPurify.sanitize(content)); // Fallback to plain text
+      }
+    };
+
+    parseMarkdown();
+  }, [content]);
+
+  return <div dangerouslySetInnerHTML={{ __html: html }} />;
+};
 
   return (
     <div className="main-layout">
@@ -476,7 +652,7 @@ export default function ChatContent() {
           <div className={`status-dot ${connectionState}`}></div>
           <span>
             {connectionState === 'connected' ? 'Connected' :
-             connectionState === 'reconnecting' ? 'Reconnecting...' : 'Disconnected'}
+              connectionState === 'reconnecting' ? 'Reconnecting...' : 'Disconnected'}
           </span>
           {connectionState !== 'connected' && (
             <button
@@ -490,21 +666,6 @@ export default function ChatContent() {
             >
               Retry
             </button>
-          )}
-        </div>
-
-        <div className="crypto-panel">
-          <h4>Encryption Status</h4>
-          <CryptoStatus />
-          {!window.Olm && (
-            <div className="crypto-help">
-              <p>To enable encryption:</p>
-              <ol>
-                <li>Ensure your browser supports WebAssembly</li>
-                <li>Check your network connection</li>
-                <li>Refresh the page to retry</li>
-              </ol>
-            </div>
           )}
         </div>
 
@@ -537,7 +698,10 @@ export default function ChatContent() {
               <button
                 aria-label={`Settings for ${room.name || room.roomId}`}
                 className="settings-button"
-                onClick={() => setSettingsRoom(room) || setSettingsOpen(true)}
+                onClick={() => {
+                  setSettingsRoom(room);
+                  setSettingsOpen(true);
+                }}
               >
                 <FontAwesomeIcon icon={faCog} />
               </button>
@@ -586,9 +750,9 @@ export default function ChatContent() {
                 <div className="message-header">
                   <FontAwesomeIcon icon={icon} style={{ marginRight: '0.5rem' }} />
                   <span>{event.getSender()}</span>
-                  <time className="message-time">{formatTime(event.getTs())}</time>
+                  <time className="message-time">{formatTime(new Date(event.getTs()).toISOString())}</time>
                 </div>
-                <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(content.body)) }} />
+                <MarkdownMessage content={content.body} />
               </div>
             );
           })}
@@ -654,7 +818,7 @@ export default function ChatContent() {
                 Room Name:
                 <input
                   type="text"
-                  value={roomName}
+                  value={roomName || 'Unnamed Room'}
                   onChange={(e) => setRoomName(e.target.value)}
                   maxLength={255}
                 />
@@ -732,14 +896,14 @@ export default function ChatContent() {
                             type="number"
                             min="0"
                             max="100"
-                            value={level}
+                            value={Number(level) || 0}
                             disabled={userPowerLevel < (powerLevels.events?.['m.room.power_levels'] ?? 50)}
                             onChange={(e) => updateUserPowerLevel(userId, Number(e.target.value))}
                           />
                         </td>
                       </tr>
                     ))
-                    : 'No users found.'}
+                    : <tr><td colSpan={2}>No users found.</td></tr>}
                 </tbody>
               </table>
 
@@ -751,7 +915,7 @@ export default function ChatContent() {
         </div>
       )}
 
-      <style jsx>{`
+      <style>{`
         .main-layout {
           display: flex;
           gap: 1rem;
