@@ -47,9 +47,6 @@ declare module "matrix-js-sdk" {
     isCryptoEnabled(): boolean;
     prepareToEncrypt(room: Room): Promise<void>;
     initCrypto(): Promise<void>;
-    bootstrapCrossSigning(opts: {
-      authUploadDeviceSigningKeys: (makeRequest: (auth: any) => Promise<void>) => Promise<void>;
-    }): Promise<void>;
     
     on(
       event: 'sync',
