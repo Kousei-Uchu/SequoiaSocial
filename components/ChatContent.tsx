@@ -249,63 +249,70 @@ export default function ChatContent() {
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMessage.trim() || !matrixClient) return;
+  e.preventDefault();
+  if (!newMessage.trim() || !matrixClient) return;
 
+  try {
+    let targetRoomId: string | undefined;
+    if (activeRoom) {
+      targetRoomId = activeRoom.roomId;
+    } else if (activeContact) {
+      targetRoomId = activeContact.linkedRooms[selectedPlatform];
+    } else {
+      return;
+    }
+
+    if (!targetRoomId) {
+      throw new Error('No target room specified');
+    }
+
+    const room = matrixClient.getRoom(targetRoomId);
+    if (!room) {
+      throw new Error('Room not found');
+    }
+
+    if (isRoomEncrypted(room)) {
+      if (!matrixClient.isCryptoEnabled()) {
+        throw new Error('Cannot send to encrypted room - encryption not supported');
+      }
+      await matrixClient.prepareToEncrypt(room);
+    }
+
+    // Handle message sending with device verification
     try {
-      let targetRoomId: string | undefined;
-      if (activeRoom) {
-        targetRoomId = activeRoom.roomId;
-      } else if (activeContact) {
-        targetRoomId = activeContact.linkedRooms[selectedPlatform];
-      } else {
-        return;
-      }
+      await matrixClient.sendTextMessage(room.roomId, newMessage);
+    } catch (err: any) {
+      if (err.name === 'UnknownDeviceError') {
+        const unknownDevices = err.data?.devices || {};
+        console.warn("⚠️ Unknown devices found:", unknownDevices);
 
-      if (!targetRoomId) {
-        throw new Error('No target room specified');
-      }
-
-      const room = matrixClient.getRoom(targetRoomId);
-      if (isRoomEncrypted(room)) {
-        if (!matrixClient.isCryptoEnabled()) {
-          throw new Error('Cannot send to encrypted room - encryption not supported');
-        }
-        await matrixClient.prepareToEncrypt(room);
-      }
-
-      // Wrap send in UnknownDeviceError handler
-      try {
-        await matrixClient.sendTextMessage(targetRoomId, newMessage);
-      } catch (err: any) {
-        if (err.name === 'UnknownDeviceError') {
-          const unknownDevices = err.devices;
-          console.warn("⚠️ Unknown devices found:", unknownDevices);
-
-          for (const userId in unknownDevices) {
-            for (const deviceId in unknownDevices[userId]) {
-              // Auto-trust devices (consider showing a confirmation modal instead)
-              await matrixClient.setDeviceVerified(userId, deviceId);
-            }
+        // Verify all unknown devices
+        const verificationPromises: Promise<void>[] = [];
+        for (const userId in unknownDevices) {
+          for (const deviceId in unknownDevices[userId]) {
+            verificationPromises.push(
+              matrixClient.setDeviceVerified(userId, deviceId, true)
+            );
           }
-
-          // Retry sending the message
-          await matrixClient.sendTextMessage(targetRoomId, newMessage);
-        } else {
-          throw err; // rethrow for outer catch
         }
-      }
-
-      setNewMessage('');
-    } catch (err: unknown) {
-      const error = err as Error;
-      console.error('❌ Failed to send message:', error);
-      setErrorMsg(`Failed to send message: ${error.message}`);
-      if (error.message.includes('encryption')) {
-        setErrorMsg(prev => `${prev} Try creating a new encrypted room.`);
+        
+        await Promise.all(verificationPromises);
+        console.log("✅ Verified all unknown devices");
+        
+        // Retry sending the message
+        await matrixClient.sendTextMessage(room.roomId, newMessage);
+      } else {
+        throw err;
       }
     }
-  };
+
+    setNewMessage('');
+  } catch (err: unknown) {
+    const error = err as Error;
+    console.error('❌ Failed to send message:', error);
+    setErrorMsg(`Failed to send message: ${error.message}`);
+  }
+};
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
