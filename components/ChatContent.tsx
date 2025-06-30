@@ -183,7 +183,7 @@ export default function ChatContent() {
   const isRoomEncrypted = (room: Room | null) => {
     if (!matrixClient || !room) return false;
     if (!room) return false;
-    return isRoomEncrypted(room);
+    return room.currentState.getStateEvents('m.room.encryption')?.length > 0;
   };
 
   const canUserEnableEncryption = (room: Room | null) => {
