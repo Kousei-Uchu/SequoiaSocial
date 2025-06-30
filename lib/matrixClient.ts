@@ -1,11 +1,22 @@
 import * as sdk from "matrix-js-sdk";
 import * as Olm from "@matrix-org/olm";
 import type { MatrixClient } from "matrix-js-sdk/lib/client";
+import type { ISecretStorageKeyInfo } from "matrix-js-sdk/lib/crypto/api";
 
 // Singleton
 let matrixClient: MatrixClient | null = null;
+let olmInitialized = false;
 
 export type { MatrixClient };
+
+// Define the cross-signing options type
+interface IBootstrapCrossSigningOpts {
+    setupNewCrossSigning: boolean;
+    authUploadDeviceSigningKeys?: (
+        makeRequest: (authData: any) => Promise<any>
+    ) => Promise<any>;
+    keyBackupInfo?: ISecretStorageKeyInfo;
+}
 
 export async function initMatrixClient(
   abortControllerRef?: AbortController
@@ -13,30 +24,47 @@ export async function initMatrixClient(
   if (matrixClient) return matrixClient;
 
   // Check browser support
-  if (typeof indexedDB === "undefined" || !window.crypto?.subtle) {
-    throw new Error("Your browser does not support required encryption features");
+  if (typeof indexedDB === "undefined") {
+    throw new Error("Your browser doesn't support IndexedDB which is required for data storage");
+  }
+  
+  if (!window.crypto?.subtle) {
+    throw new Error("Your browser doesn't support Web Crypto API which is required for encryption");
   }
 
-  try {
-    // Initialize OLM with WASM
-    const wasmResponse = await fetch('/api/olm-wasm');
-    if (!wasmResponse.ok) {
-      throw new Error('Failed to load OLM WASM file');
+  // Initialize OLM
+  if (!olmInitialized) {
+    try {
+      await initializeOLM(abortControllerRef);
+      olmInitialized = true;
+    } catch (err) {
+      console.error("OLM initialization failed, continuing without encryption:", err);
     }
-    const wasmBinary = await wasmResponse.arrayBuffer();
-    await Olm.init({ wasmBinary });
-    console.log("✅ OLM initialized successfully");
-  } catch (err) {
-    console.error("OLM initialization failed:", err);
-    throw new Error("Could not initialize encryption support");
   }
 
   // Get authentication tokens
-  const res = await fetch("/api/get-matrix-token");
-  if (!res.ok) throw new Error("Not authenticated");
-  const { access_token, user_id, device_id } = await res.json();
-  if (!access_token || !user_id) {
-    throw new Error("Missing access token or user ID");
+  let access_token: string, user_id: string, device_id: string | undefined;
+  try {
+    const res = await fetch("/api/get-matrix-token", {
+      signal: abortControllerRef?.signal
+    });
+    
+    if (!res.ok) {
+      if (res.status === 401) throw new Error("Not authenticated - please login again");
+      throw new Error(`Failed to get access token: ${res.statusText}`);
+    }
+    
+    const tokenData = await res.json();
+    access_token = tokenData.access_token;
+    user_id = tokenData.user_id;
+    device_id = tokenData.device_id;
+    
+    if (!access_token || !user_id) {
+      throw new Error("Server response missing required authentication data");
+    }
+  } catch (err) {
+    console.error("Authentication failed:", err);
+    throw new Error("Failed to authenticate with the server");
   }
 
   // Create client instance
@@ -67,64 +95,144 @@ export async function initMatrixClient(
   });
 
   // Initialize store
-  await client.store.startup();
-  const accessToken = client.getAccessToken();
+  try {
+    await client.store.startup();
+  } catch (err) {
+    console.error("Failed to initialize store:", err);
+    throw new Error("Failed to initialize local data storage");
+  }
 
   // Initialize crypto if available
-  if (client.initCrypto) {
+  if (olmInitialized && client.initCrypto) {
     try {
       await client.initCrypto();
       console.log("✅ Encryption initialized");
+      
+      // Initialize cross-signing if crypto is enabled
+      if (client.isCryptoEnabled()) {
+        await initializeCrossSigning(client, access_token);
+      }
     } catch (err) {
       console.warn("⚠️ Failed to initialize encryption:", err);
-      // Continue without encryption if it fails
     }
   }
 
-  if (client.isCryptoEnabled()) {
+  // Set up sync
+  try {
+    await startClientWithSync(client, abortControllerRef);
+  } catch (err) {
+    console.error("Failed to start client sync:", err);
+    client.stopClient();
+    throw new Error("Failed to establish connection with server");
+  }
+
+  matrixClient = client;
+  return client;
+}
+
+async function initializeOLM(abortController?: AbortController): Promise<void> {
+  try {
+    const wasmResponse = await fetch('/api/olm-wasm', {
+      signal: abortController?.signal
+    });
+    
+    if (!wasmResponse.ok) {
+      throw new Error(`Failed to load OLM WASM: ${wasmResponse.status}`);
+    }
+    
+    const wasmBinary = await wasmResponse.arrayBuffer();
+    await Olm.init({ wasmBinary });
+    console.log("✅ OLM initialized successfully");
+  } catch (err) {
+    console.warn("First OLM initialization attempt failed, trying fallback:", err);
+    
     try {
-      await client.bootstrapCrossSigning({
-        setupNewCrossSigning: true,
-        // @ts-expect-error: auth is supported at runtime even though not in type
-        auth: async (makeRequest) => {
-          return makeRequest({
-            type: "m.login.token",
-            identifier: {
-              type: "m.id.user",
-              user: client.getUserId()!,
-            },
-            token: accessToken,
-          });
-        },
-      });
-      console.log("✅ Cross-signing bootstrap completed.");
-    } catch (err) {
-      console.error("❌ Failed to bootstrap cross-signing:", err);
+      await loadOLMFromCDN();
+      console.log("✅ OLM initialized from fallback source");
+    } catch (fallbackErr) {
+      console.error("All OLM initialization attempts failed:", fallbackErr);
+      throw new Error("Could not initialize encryption support");
     }
   }
+}
 
-  // Set up sync listener with proper typing
-  await new Promise<void>((resolve, reject) => {
+async function loadOLMFromCDN(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/@matrix-org/olm@3.2.4/olm.js';
+    script.async = true;
+    
+    script.onload = async () => {
+      try {
+        await window.Olm.init();
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    };
+    
+    script.onerror = () => {
+      reject(new Error('Failed to load OLM script'));
+    };
+    
+    document.body.appendChild(script);
+  });
+}
+
+async function initializeCrossSigning(client: MatrixClient, accessToken: string): Promise<void> {
+  try {
+    const opts: IBootstrapCrossSigningOpts = {
+      setupNewCrossSigning: true,
+      authUploadDeviceSigningKeys: async (makeRequest) => {
+        return makeRequest({
+          type: "m.login.token",
+          identifier: {
+            type: "m.id.user",
+            user: client.getUserId()!,
+          },
+          token: accessToken,
+        });
+      },
+    };
+
+    await client.bootstrapCrossSigning(opts);
+    console.log("✅ Cross-signing bootstrap completed.");
+  } catch (err) {
+    console.error("❌ Failed to bootstrap cross-signing:", err);
+  }
+}
+
+async function startClientWithSync(client: MatrixClient, abortController?: AbortController): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const syncTimeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Sync timed out after 30 seconds"));
+    }, 30000);
+
     const onSync = (state: string, prevState: string | null) => {
       if (state === "PREPARED") {
-        client.removeListener("sync" as any, onSync);
+        cleanup();
         resolve();
       } else if (state === "ERROR") {
-        client.removeListener("sync" as any, onSync);
+        cleanup();
         reject(new Error("Sync failed"));
       }
     };
 
-    client.on("sync" as any, onSync);
-    client.startClient();
-
-    // Timeout after 30 seconds
-    setTimeout(() => {
+    const cleanup = () => {
       client.removeListener("sync" as any, onSync);
-      reject(new Error("Sync timed out"));
-    }, 30000);
-  });
+      clearTimeout(syncTimeout);
+    };
 
-  matrixClient = client;
-  return client;
+    client.on("sync" as any, onSync);
+    
+    abortController?.signal.addEventListener('abort', () => {
+      cleanup();
+      reject(new Error("Initialization was aborted"));
+    });
+
+    client.startClient({
+      initialSyncLimit: 20,
+    });
+  });
 }
