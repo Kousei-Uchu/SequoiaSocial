@@ -15,14 +15,6 @@ export const metadata = {
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
-  // Patch setImmediate in browser only
-  useEffect(() => {
-    if (typeof window !== "undefined" && typeof window.setImmediate === "undefined") {
-      (window as any).setImmediate = (fn: (...args: any[]) => void, ...args: any[]) =>
-        setTimeout(fn, 0, ...args);
-    }
-  }, []);
-
   return (
     <html lang="en">
       <body>
