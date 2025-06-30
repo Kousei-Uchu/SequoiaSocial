@@ -5,6 +5,8 @@ import type { MatrixClient } from "matrix-js-sdk/lib/client";
 // Singleton
 let matrixClient: MatrixClient | null = null;
 
+export type { MatrixClient };
+
 export async function initMatrixClient(
   abortControllerRef?: AbortController
 ): Promise<MatrixClient> {
