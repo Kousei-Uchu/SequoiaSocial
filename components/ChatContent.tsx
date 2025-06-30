@@ -250,112 +250,112 @@ export default function ChatContent() {
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  if (!newMessage.trim() || !matrixClient) return;
+    e.preventDefault();
+    if (!newMessage.trim() || !matrixClient) return;
 
-  try {
-    // Get target room
-    const targetRoomId = activeRoom?.roomId ?? activeContact?.linkedRooms[selectedPlatform];
-    if (!targetRoomId) throw new Error('No target room specified');
-
-    const room = matrixClient.getRoom(targetRoomId);
-    if (!room) throw new Error('Room not found');
-
-    // Handle encryption if needed
-    if (isRoomEncrypted(room)) {
-      if (!matrixClient.isCryptoEnabled()) {
-        throw new Error('Cannot send to encrypted room - encryption not supported');
-      }
-
-      try {
-        await matrixClient.prepareToEncrypt(room);
-      } catch (err) {
-        console.error('Failed to prepare encryption:', err);
-        throw new Error('Failed to initialize room encryption');
-      }
-    }
-
-    // Send message with proper device verification handling
-    await sendMessageWithDeviceVerification(matrixClient, room, newMessage);
-    setNewMessage('');
-  } catch (err: unknown) {
-    const error = err as Error;
-    console.error('❌ Failed to send message:', error);
-    setErrorMsg(`Failed to send message: ${error.message}`);
-  }
-};
-
-// Helper function to handle device verification
-async function sendMessageWithDeviceVerification(
-  client: MatrixClient,
-  room: Room,
-  message: string,
-  maxRetries = 2
-): Promise<void> {
-  let attempt = 0;
-  
-  while (attempt <= maxRetries) {
     try {
-      await client.sendTextMessage(room.roomId, message);
-      return; // Success!
-    } catch (err: any) {
-      if (err.name !== 'UnknownDeviceError') throw err;
-      
-      attempt++;
-      console.warn(`⚠️ Unknown devices detected (attempt ${attempt}/${maxRetries})`);
-      
-      // Get the actual device list from the error
-      const unknownDevices = err.data?.devices || {};
-      if (Object.keys(unknownDevices).length === 0) {
-        console.warn('No devices listed in UnknownDeviceError, cannot verify');
-        throw err;
+      // Get target room
+      const targetRoomId = activeRoom?.roomId ?? activeContact?.linkedRooms[selectedPlatform];
+      if (!targetRoomId) throw new Error('No target room specified');
+
+      const room = matrixClient.getRoom(targetRoomId);
+      if (!room) throw new Error('Room not found');
+
+      // Handle encryption if needed
+      if (isRoomEncrypted(room)) {
+        if (!matrixClient.isCryptoEnabled()) {
+          throw new Error('Cannot send to encrypted room - encryption not supported');
+        }
+
+        try {
+          await matrixClient.prepareToEncrypt(room);
+        } catch (err) {
+          console.error('Failed to prepare encryption:', err);
+          throw new Error('Failed to initialize room encryption');
+        }
       }
 
-      // Verify all unknown devices
+      // Send message with proper device verification handling
+      await sendMessageWithDeviceVerification(matrixClient, room, newMessage);
+      setNewMessage('');
+    } catch (err: unknown) {
+      const error = err as Error;
+      console.error('❌ Failed to send message:', error);
+      setErrorMsg(`Failed to send message: ${error.message}`);
+    }
+  };
+
+  // Helper function to handle device verification
+  async function sendMessageWithDeviceVerification(
+    client: MatrixClient,
+    room: Room,
+    message: string,
+    maxRetries = 2
+  ): Promise<void> {
+    let attempt = 0;
+
+    while (attempt <= maxRetries) {
       try {
-        await verifyAllDevices(client, unknownDevices);
-        
-        // Small delay to let verification propagate
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } catch (verifyErr) {
-        console.error('Failed to verify devices:', verifyErr);
-        throw new Error('Device verification failed');
+        await client.sendTextMessage(room.roomId, message);
+        return; // Success!
+      } catch (err: any) {
+        if (err.name !== 'UnknownDeviceError') throw err;
+
+        attempt++;
+        console.warn(`⚠️ Unknown devices detected (attempt ${attempt}/${maxRetries})`);
+
+        // Get the actual device list from the error
+        const unknownDevices = err.data?.devices || {};
+        if (Object.keys(unknownDevices).length === 0) {
+          console.warn('No devices listed in UnknownDeviceError, cannot verify');
+          throw err;
+        }
+
+        // Verify all unknown devices
+        try {
+          await verifyAllDevices(client, unknownDevices);
+
+          // Small delay to let verification propagate
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (verifyErr) {
+          console.error('Failed to verify devices:', verifyErr);
+          throw new Error('Device verification failed');
+        }
       }
     }
-  }
-  
-  throw new Error('Max retries reached for device verification');
-}
 
-// Verify all devices in the list
-async function verifyAllDevices(
-  client: MatrixClient,
-  devices: Record<string, Record<string, any>>
-): Promise<void> {
-  const verificationPromises: Promise<void>[] = [];
-  
-  for (const userId in devices) {
-    for (const deviceId in devices[userId]) {
-      const deviceInfo = devices[userId][deviceId];
-      
-      console.log(`Verifying device ${deviceId} for ${userId}`);
-      
-      verificationPromises.push(
-        client.setDeviceVerified(userId, deviceId, true)
-          .then(() => {
-            console.log(`✅ Verified device ${deviceId} for ${userId}`);
-          })
-          .catch(err => {
-            console.error(`❌ Failed to verify device ${deviceId}:`, err);
-            throw err;
-          })
-      );
-    }
+    throw new Error('Max retries reached for device verification');
   }
-  
-  await Promise.all(verificationPromises);
-  console.log('✅ All devices verified');
-}
+
+  // Verify all devices in the list
+  async function verifyAllDevices(
+    client: MatrixClient,
+    devices: Record<string, Record<string, any>>
+  ): Promise<void> {
+    const verificationPromises: Promise<void>[] = [];
+
+    for (const userId in devices) {
+      for (const deviceId in devices[userId]) {
+        const deviceInfo = devices[userId][deviceId];
+
+        console.log(`Verifying device ${deviceId} for ${userId}`);
+
+        verificationPromises.push(
+          client.setDeviceVerified(userId, deviceId, true)
+            .then(() => {
+              console.log(`✅ Verified device ${deviceId} for ${userId}`);
+            })
+            .catch(err => {
+              console.error(`❌ Failed to verify device ${deviceId}:`, err);
+              throw err;
+            })
+        );
+      }
+    }
+
+    await Promise.all(verificationPromises);
+    console.log('✅ All devices verified');
+  }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
