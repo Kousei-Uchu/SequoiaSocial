@@ -267,7 +267,7 @@ export default function ChatContent() {
       }
 
       const room = matrixClient.getRoom(targetRoomId);
-      if (room?.hasEncryptionStateEvent()) {
+      if (isRoomEncrypted(room)) {
         if (!matrixClient.isCryptoEnabled()) {
           throw new Error('Cannot send to encrypted room - encryption not supported');
         }
@@ -768,7 +768,7 @@ export default function ChatContent() {
       </section>
 
       <section className="message-window" ref={messagesContainerRef} onScroll={handleScroll}>
-        {activeRoom?.hasEncryptionStateEvent?.() && !matrixClient?.isCryptoEnabled() && (
+        {isRoomEncrypted(activeRoom) && !matrixClient?.isCryptoEnabled() && (
           <div className="encryption-error">
             <FontAwesomeIcon icon={faExclamationTriangle} />
             Warning: This room is encrypted but your client doesn't support encryption.
@@ -832,7 +832,7 @@ export default function ChatContent() {
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={connectionState !== 'connected' || (activeRoom?.hasEncryptionStateEvent?.() && !matrixClient?.isCryptoEnabled())}
+            disabled={connectionState !== 'connected' || (isRoomEncrypted(activeRoom) && !matrixClient?.isCryptoEnabled())}
           />
           <button
             type="submit"
@@ -844,7 +844,7 @@ export default function ChatContent() {
               borderRadius: '6px',
               marginTop: '0.5rem',
             }}
-            disabled={connectionState !== 'connected' || (activeRoom?.hasEncryptionStateEvent?.() && !matrixClient?.isCryptoEnabled())}
+            disabled={connectionState !== 'connected' || (isRoomEncrypted(activeRoom) && !matrixClient?.isCryptoEnabled())}
           >
             <FontAwesomeIcon icon={platformMap[selectedPlatform]?.icon || faQuestionCircle} /> Send
           </button>
