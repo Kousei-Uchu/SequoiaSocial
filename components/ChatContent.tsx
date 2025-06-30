@@ -965,7 +965,7 @@ export default function ChatContent() {
         .main-layout {
           display: flex;
           gap: 1rem;
-          height: 100vh;
+          height: 100%;
           color: white;
           background: #121212;
         }

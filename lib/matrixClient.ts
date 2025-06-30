@@ -66,6 +66,7 @@ export async function initMatrixClient(
 
   // Initialize store
   await client.store.startup();
+  const accessToken = client.getAccessToken();
 
   // Initialize crypto if available
   if (client.initCrypto) {
@@ -75,6 +76,27 @@ export async function initMatrixClient(
     } catch (err) {
       console.warn("⚠️ Failed to initialize encryption:", err);
       // Continue without encryption if it fails
+    }
+  }
+
+  if (client.isCryptoEnabled()) {
+    try {
+      await client.bootstrapCrossSigning({
+        setupNewCrossSigning: true,
+        auth: async (makeRequest) => {
+          return makeRequest({
+            type: "m.login.token",
+            identifier: {
+              type: "m.id.user",
+              user: client.getUserId()!,
+            },
+            token: accessToken,
+          });
+        },
+      });
+      console.log("✅ Cross-signing bootstrap completed.");
+    } catch (err) {
+      console.error("❌ Failed to bootstrap cross-signing:", err);
     }
   }
 
