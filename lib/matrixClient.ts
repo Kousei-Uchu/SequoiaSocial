@@ -83,6 +83,7 @@ export async function initMatrixClient(
     try {
       await client.bootstrapCrossSigning({
         setupNewCrossSigning: true,
+        // @ts-expect-error: auth is supported at runtime even though not in type
         auth: async (makeRequest) => {
           return makeRequest({
             type: "m.login.token",
