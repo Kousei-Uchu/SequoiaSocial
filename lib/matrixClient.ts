@@ -71,11 +71,6 @@ export async function initMatrixClient(
   if (client.initCrypto) {
     try {
       await client.initCrypto();
-      await client.bootstrapCrossSigning({
-        authUploadDeviceSigningKeys: async (makeRequest) => {
-          await makeRequest({});
-        },
-      });
       console.log("✅ Encryption initialized");
     } catch (err) {
       console.warn("⚠️ Failed to initialize encryption:", err);
