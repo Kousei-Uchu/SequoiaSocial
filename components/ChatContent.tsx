@@ -47,7 +47,7 @@ declare module "matrix-js-sdk" {
     isCryptoEnabled(): boolean;
     prepareToEncrypt(room: Room): Promise<void>;
     initCrypto(): Promise<void>;
-    
+
     on(
       event: 'sync',
       callback: (state: string, prevState: string | null, data?: any) => void
@@ -274,11 +274,32 @@ export default function ChatContent() {
         await matrixClient.prepareToEncrypt(room);
       }
 
-      await matrixClient.sendTextMessage(targetRoomId, newMessage);
+      // Wrap send in UnknownDeviceError handler
+      try {
+        await matrixClient.sendTextMessage(targetRoomId, newMessage);
+      } catch (err: any) {
+        if (err.name === 'UnknownDeviceError') {
+          const unknownDevices = err.devices;
+          console.warn("⚠️ Unknown devices found:", unknownDevices);
+
+          for (const userId in unknownDevices) {
+            for (const deviceId in unknownDevices[userId]) {
+              // Auto-trust devices (consider showing a confirmation modal instead)
+              await matrixClient.setDeviceVerified(userId, deviceId);
+            }
+          }
+
+          // Retry sending the message
+          await matrixClient.sendTextMessage(targetRoomId, newMessage);
+        } else {
+          throw err; // rethrow for outer catch
+        }
+      }
+
       setNewMessage('');
     } catch (err: unknown) {
       const error = err as Error;
-      console.error('Failed to send message:', error);
+      console.error('❌ Failed to send message:', error);
       setErrorMsg(`Failed to send message: ${error.message}`);
       if (error.message.includes('encryption')) {
         setErrorMsg(prev => `${prev} Try creating a new encrypted room.`);
@@ -297,8 +318,8 @@ export default function ChatContent() {
     if (!matrixClient) return;
     try {
       await matrixClient.sendStateEvent(
-        room.roomId, 
-        'm.room.encryption' as keyof sdk.StateEvents, 
+        room.roomId,
+        'm.room.encryption' as keyof sdk.StateEvents,
         {
           algorithm: 'm.megolm.v1.aes-sha2',
         }
@@ -318,42 +339,42 @@ export default function ChatContent() {
     try {
       if (roomName) {
         await matrixClient.sendStateEvent(
-          settingsRoom.roomId, 
-          'm.room.name' as keyof sdk.StateEvents, 
+          settingsRoom.roomId,
+          'm.room.name' as keyof sdk.StateEvents,
           { name: roomName }
         );
       }
       if (roomTopic) {
         await matrixClient.sendStateEvent(
-          settingsRoom.roomId, 
-          'm.room.topic' as keyof sdk.StateEvents, 
+          settingsRoom.roomId,
+          'm.room.topic' as keyof sdk.StateEvents,
           { topic: roomTopic }
         );
       }
       if (joinRule) {
         await matrixClient.sendStateEvent(
-          settingsRoom.roomId, 
-          'm.room.join_rules' as keyof sdk.StateEvents, 
+          settingsRoom.roomId,
+          'm.room.join_rules' as keyof sdk.StateEvents,
           { join_rule: joinRule }
         );
       }
       if (historyVisibility) {
         await matrixClient.sendStateEvent(
-          settingsRoom.roomId, 
-          'm.room.history_visibility' as keyof sdk.StateEvents, 
+          settingsRoom.roomId,
+          'm.room.history_visibility' as keyof sdk.StateEvents,
           { history_visibility: historyVisibility }
         );
       }
       if (guestAccess) {
         await matrixClient.sendStateEvent(
-          settingsRoom.roomId, 
-          'm.room.guest_access' as keyof sdk.StateEvents, 
+          settingsRoom.roomId,
+          'm.room.guest_access' as keyof sdk.StateEvents,
           { guest_access: guestAccess }
         );
       }
       await matrixClient.sendStateEvent(
-        settingsRoom.roomId, 
-        'm.room.power_levels' as keyof sdk.StateEvents, 
+        settingsRoom.roomId,
+        'm.room.power_levels' as keyof sdk.StateEvents,
         powerLevels
       );
 
