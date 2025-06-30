@@ -39,7 +39,7 @@ export async function initMatrixClient(
 
   // Create client instance
   const client = sdk.createClient({
-    baseUrl: "https://matrix.social.sequoiasupport.com",
+    baseUrl: "https://matrix.social.sequoiasupport.com:8448",
     accessToken: access_token,
     userId: user_id,
     deviceId: device_id || `web_${Date.now()}`,
