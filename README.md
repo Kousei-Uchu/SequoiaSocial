@@ -1,7 +1,8 @@
 # SequoiaSocial
 Neurospicy connection! An Chat Platform in development for Neurodivergent Individuals, and anyone else. It uses Matrix, E2EE, and connects to many other platforms, to recieve all your messages in one app (With the ability to group conversations per person for one continuous flow).
 
-
+# ARCHIVED REPO
+I have decided to fork Cinny instead of coding this from scratch due to the project's complexity and because it's good for me to explore others' code to learn new ways to do things. If you wish to fork this repo and make your own versiion based off this and finish it, I'd be glad to partner! Thanks!
 
 # ROADMAP
 ## Preparation
